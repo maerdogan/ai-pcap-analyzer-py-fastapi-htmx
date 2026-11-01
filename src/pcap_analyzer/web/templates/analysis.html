@@ -9,5 +9,11 @@
   {% endfor %}
   <a href="/a/{{ a.id }}/inspect">Inspect traffic</a>
 </nav>
+<p class="downloads">Download:
+  <a href="/export/{{ a.id }}/report.html">Report</a>
+  {% for n, l in [("requests", "Requests"), ("urls", "URLs"), ("connections", "Connections"), ("hosts", "Hosts"), ("issues", "Issues")] %}
+  <span>{{ l }} <a href="/export/{{ a.id }}/{{ n }}.csv" aria-label="{{ l }} as CSV">CSV</a> <a href="/export/{{ a.id }}/{{ n }}.xlsx" aria-label="{{ l }} as Excel">Excel</a> <a href="/export/{{ a.id }}/{{ n }}.json" aria-label="{{ l }} as JSON">JSON</a></span>
+  {% endfor %}
+</p>
 <div id="tab">{% include "_tab_" ~ tab ~ ".html" %}</div>
 {% endblock %}

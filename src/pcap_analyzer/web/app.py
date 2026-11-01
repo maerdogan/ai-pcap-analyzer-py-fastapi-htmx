@@ -2,6 +2,7 @@
 import datetime
 import ipaddress
 import os
+import re
 import shutil
 import tempfile
 from pathlib import Path
@@ -11,7 +12,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Resp
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from .. import __version__, engine, reports, tshark
+from .. import __version__, compare, engine, exports, reports, tshark
 from ..config import Settings
 from . import saved
 from .auth import Auth
@@ -24,7 +25,7 @@ CHUNK = 1 << 20
 FORM_OVERHEAD = 2 * CHUNK  # key files and form fields on top of the capture
 KEY_LIMIT = CHUNK
 TABS = {"overview": "Overview", "issues": "Issues", "urls": "URLs", "connections": "Connections", "hosts": "Hosts"}
-CSP = ("default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; object-src 'none'; "
+CSP = ("default-src 'self'; img-src 'self' data:; font-src 'self' data:; style-src 'self' 'unsafe-inline'; object-src 'none'; "
        "base-uri 'none'; frame-ancestors 'none'; form-action 'self'")
 
 
@@ -309,6 +310,61 @@ def create_app(settings=None, secure_cookie=False):
         back = form.get("back") or "/"
         return RedirectResponse(back if back.startswith("/a/") else "/", 303)
 
+    def side_filter(q, suffix):
+        return inspect_filter({k: q.get(k + suffix) for k in ("src", "dst", "port", "kind", "url", "min_size", "size_of")})
+
+    @app.get("/compare", response_class=HTMLResponse)
+    def compare_page(request: Request):
+        q = dict(request.query_params)
+        ctx = dict(q=q, analyses=engine.list_analyses(settings), result=None, points=None, a=None, b=None)
+        if q.get("a") and q.get("b"):
+            a, b = opened(q["a"]), opened(q["b"])
+            ctx.update(a=a, b=b)
+            with a.connect() as da, b.connect() as db:
+                if q.get("mode") == "points":
+                    ctx["points"] = compare.two_point(da, db)
+                else:
+                    fa = side_filter(q, "_a")
+                    fb = side_filter({**{k[:-2] + "_b": v for k, v in q.items() if k.endswith("_a") and v}, **{k: v for k, v in q.items() if k.endswith("_b") and v}}, "_b")
+                    ctx["result"] = compare.captures(da, db, fa, fb)
+        return page(request, "compare.html", **ctx)
+
+    @app.get("/export/{aid}/report.html")
+    def export_report(request: Request, aid: str):
+        a = opened(aid)
+        with a.connect() as db:
+            ctx = dict(a=a, m=a.meta, o=reports.overview(db, a.meta), budget=reports.time_budget(db), issues=reports.issues(db, a.meta), urls=reports.url_groups(db),
+                       slow=reports.slowest(db), css=(HERE / "static/app.css").read_text())
+        html = templates.get_template("report.html").render(ctx)
+        return Response(html, media_type="text/html; charset=utf-8", headers=_attachment(a, "report.html"))
+
+    @app.get("/export/{aid}/{name}.{fmt}")
+    def export_table(aid: str, name: str, fmt: str):
+        a = opened(aid)
+        if name not in exports.TABLES or fmt not in exports.FORMATS:
+            _bad("This export does not exist.", 404)
+        with a.connect() as db:
+            body = exports.render(exports.table(db, name, a.meta), fmt)
+        return Response(body, media_type=exports.FORMATS[fmt], headers=_attachment(a, f"{name}.{fmt}"))
+
+    @app.get("/export/{aid}/conn/{stream}.pcapng")
+    def export_stream(aid: str, stream: int):
+        a = opened(aid)
+        capture = a.dir / "capture"
+        if not capture.exists():
+            _bad("The original capture was not kept, so packets cannot be exported.", 404)
+        with a.connect() as db:
+            if not reports.one(db, "SELECT stream FROM tcp_connections WHERE stream = ?", [stream]):
+                _bad("This connection does not exist.", 404)
+        with tempfile.TemporaryDirectory(prefix="pcap-export-", dir="/tmp") as tmp:
+            out = Path(tmp) / "out.pcapng"
+            try:
+                tshark.extract_stream(capture, stream, out, settings.tshark)
+            except tshark.TsharkError as e:
+                _bad(str(e), 500)
+            body = out.read_bytes()
+        return Response(body, media_type="application/vnd.tcpdump.pcap", headers=_attachment(a, f"connection-{stream}.pcapng"))
+
     @app.get("/api/a/{aid}/{what}")
     def api(aid: str, what: str):
         a = opened(aid)
@@ -328,6 +384,11 @@ def create_app(settings=None, secure_cookie=False):
         return data
 
     return app
+
+
+def _attachment(a, name):
+    stem = re.sub(r"[^A-Za-z0-9._-]+", "_", a.meta["filename"])[:60]
+    return {"Content-Disposition": f'attachment; filename="{stem}-{name}"'}
 
 
 def _escape(text):

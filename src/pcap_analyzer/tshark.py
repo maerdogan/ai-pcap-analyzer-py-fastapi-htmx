@@ -105,6 +105,17 @@ def _private_copy(src, directory, name):
     return dst
 
 
+def extract_stream(capture, stream, out, binary="tshark"):
+    """Write one TCP connection to a new capture file, keeping it whole so Wireshark can reassemble it."""
+    with tempfile.TemporaryDirectory(prefix="pcap-analyzer-", dir="/tmp") as tmp:
+        src = _private_copy(capture, tmp, "capture")
+        dst = Path(tmp) / "out.pcapng"
+        done = subprocess.run([binary, "-n", "-r", str(src), "-Y", f"tcp.stream == {int(stream)}", "-w", str(dst)], capture_output=True, text=True)
+        if done.returncode != 0:
+            raise TsharkError(done.stderr.strip().splitlines()[-1] if done.stderr.strip() else "tshark could not write the file")
+        shutil.copyfile(dst, out)
+
+
 def packets(path, keylog=None, rsa_key=None, flt=None, binary="tshark", warnings=None):
     """Yield packets as dicts. Non-fatal problems are appended to warnings."""
     expr = flt.expression() if flt else None

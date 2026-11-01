@@ -51,7 +51,19 @@
   }
 
   const INK = "#14263a", MUTED = "#55677a", LINE = "#c9d3db";
-  const tools = (name) => ({ right: 0, feature: { saveAsImage: { name, title: "Save as PNG", backgroundColor: "#edf1f4" } } });
+  function saveSvg(option, name, el) {
+    const c = echarts.init(null, null, { renderer: "svg", ssr: true, width: el.clientWidth, height: el.clientHeight });
+    c.setOption(option);
+    const url = URL.createObjectURL(new Blob([c.renderToSVGString()], { type: "image/svg+xml" }));
+    const a = Object.assign(document.createElement("a"), { href: url, download: name + ".svg" });
+    a.click();
+    URL.revokeObjectURL(url);
+    c.dispose();
+  }
+  const tools = (name) => ({ right: 0, feature: {
+    saveAsImage: { name, title: "Save as PNG", backgroundColor: "#edf1f4" },
+    mySvg: { show: true, title: "Save as SVG", icon: "path://M4 4h16v16H4z", onclick: (m, api) => saveSvg(api.getOption(), name, api.getDom()) },
+  } });
   const CHARTS = {
     histogram: (data, name) => ({
       toolbox: tools(name), grid: { left: 44, right: 12, top: 30, bottom: 56 }, tooltip: {},

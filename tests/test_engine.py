@@ -222,7 +222,7 @@ def test_not_a_capture(settings, tmp_path):
 def test_no_key_left_behind(samples, settings):
     a = engine.analyze(samples / "https_tls13.pcap", keylog=samples / "https_tls13.keylog", settings=settings)
     names = {p.name for p in a.dir.iterdir()}
-    assert names == {"analysis.duckdb", "meta.json"}
+    assert names == {"analysis.duckdb", "meta.json", "capture"}
     assert not list(__import__("pathlib").Path("/tmp").glob("pcap-analyzer-*"))
 
 

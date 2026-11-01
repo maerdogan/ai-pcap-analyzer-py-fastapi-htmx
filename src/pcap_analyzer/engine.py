@@ -121,6 +121,10 @@ def analyze(path, keylog=None, rsa_key=None, flt=None, settings=None, use_cached
         packets=b.total, tcp_packets=b.tcp, bytes=b.bytes, connections=len(conns), transactions=len(txns),
         ip_fragments=b.fragments, frag_needed=b.frag_needed, capture_start=b.t_first, capture_end=b.t_last, duration_s=round(time.monotonic() - started, 3),
         warnings=_warnings(b, conns, bool(keylog or rsa_key), warnings))
+    if settings.keep_capture:
+        shutil.copyfile(path, tmp / "capture")
+        (tmp / "capture").chmod(0o600)
+    meta["capture_kept"] = settings.keep_capture
     (tmp / "meta.json").write_text(json.dumps(meta, indent=2))
     shutil.rmtree(out, ignore_errors=True)
     try:

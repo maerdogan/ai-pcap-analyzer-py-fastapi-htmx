@@ -4,7 +4,7 @@ import getpass
 import json
 import sys
 
-from . import __version__, engine, reports, tshark
+from . import __version__, compare, engine, reports, tshark
 from .config import Settings
 
 
@@ -56,6 +56,10 @@ def main(argv=None):
     ins.add_argument("--url")
     ins.add_argument("--min-size", type=int)
     ins.add_argument("--size-of", choices=list(reports.SIZE_SQL), default="total")
+    cp = sub.add_parser("compare", help="compare two saved analyses, as JSON")
+    cp.add_argument("a")
+    cp.add_argument("b")
+    cp.add_argument("--two-point", action="store_true", help="match the same requests seen at two points, A nearer the client")
     sv = sub.add_parser("serve", help="start the web interface")
     sv.add_argument("--host", default="127.0.0.1")
     sv.add_argument("--port", type=int, default=8000)
@@ -85,6 +89,11 @@ def main(argv=None):
         elif args.cmd == "hash-password":
             from .web.auth import hash_password
             print(hash_password(getpass.getpass("Password: ")))
+        elif args.cmd == "compare":
+            a, b = engine.open_analysis(args.a, settings), engine.open_analysis(args.b, settings)
+            with a.connect() as da, b.connect() as db:
+                out = compare.two_point(da, db) if args.two_point else compare.captures(da, db, reports.Inspect(), reports.Inspect())
+            print(json.dumps(out, indent=2, default=str))
         elif args.cmd in ("report", "connection", "inspect"):
             a = engine.open_analysis(args.id, settings)
             with a.connect() as db:

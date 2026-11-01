@@ -8,6 +8,7 @@
 <h1>{{ c.client_ip }}:{{ c.client_port }} to {{ c.server_ip }}:{{ c.server_port }}</h1>
 <p class="lead">{{ c.kind }}, {{ d.total }} requests, open for {{ c.duration | seconds }}.
   {% if c.close_type %}Closed by the {{ c.closed_by }} with {{ c.close_type }}.{% else %}Still open when the capture ended.{% endif %}</p>
+{% if m.capture_kept %}<p><a href="/export/{{ a.id }}/conn/{{ c.stream }}.pcapng">Download this connection as PCAP</a></p>{% endif %}
 <section>
   <h2>TCP details</h2>
   <dl class="stats">

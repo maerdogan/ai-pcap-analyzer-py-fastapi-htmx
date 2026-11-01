@@ -16,7 +16,10 @@ All changes made on the same day are one minor version.
 - Slowest requests with a time breakdown and a plain explanation of the cause: slow service, network delay, packet loss, slow receiver, delayed ACK, queueing, gateway error, incomplete response and more.
 - Masking of secrets in URLs, headers and body previews before anything is saved.
 - Web interface with a single admin login, capture upload, history, issues list, response time chart, sortable tables, request content view and saved filters.
-- Command line: `analyze`, `report`, `connection`, `inspect`, `list`, `delete`, `purge`, `serve` and `hash-password`.
+- Comparison of two captures with changes per URL and phase, separate filters for each side, and matching of the same requests seen at two points.
+- Export of tables to CSV, Excel and JSON, charts to PNG and SVG, a single-file HTML report, and one connection as PCAP.
+- Container image, Compose file, Kubernetes manifests, systemd unit and install guide.
+- Command line: `analyze`, `report`, `connection`, `inspect`, `compare`, `list`, `delete`, `purge`, `serve` and `hash-password`.
 - Synthetic sample generator with known timings, used by the tests.
 
 ### Fixed
@@ -25,5 +28,6 @@ All changes made on the same day are one minor version.
 - `X-Request-ID` and `Server-Timing` values no longer keep a literal `\r\n` from tshark output.
 - Multi-line headers no longer break saving results.
 - Two identical analyses running together no longer collide.
+- Table icons no longer break under the content security policy.
 - Sample generator: the TLS client now verifies the test certificate.
 - Sample generator: the high-latency scenario now acknowledges data at the real round-trip time.

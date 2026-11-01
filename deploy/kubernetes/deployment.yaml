@@ -1,0 +1,71 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pcap-analyzer
+  namespace: pcap-analyzer
+spec:
+  replicas: 1 # sessions and jobs live in memory, so keep one pod
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: pcap-analyzer
+  template:
+    metadata:
+      labels:
+        app: pcap-analyzer
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: pcap-analyzer
+          image: registry.example.internal/pcap-analyzer:0.1.0 # your internal registry
+          ports:
+            - containerPort: 8000
+          env:
+            - name: PCAP_ANALYZER_BEHIND_PROXY
+              value: "1"
+            - name: PCAP_ANALYZER_ADMIN_PASSWORD_HASH
+              valueFrom:
+                secretKeyRef:
+                  name: pcap-analyzer-admin
+                  key: password-hash
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              cpu: "2"
+              memory: 2Gi
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 8000
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8000
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: pcap-analyzer-data
+        - name: tmp
+          emptyDir:
+            sizeLimit: 1Gi

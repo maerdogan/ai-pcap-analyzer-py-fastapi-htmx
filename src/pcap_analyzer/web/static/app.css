@@ -21,7 +21,9 @@ h3 { font-size: 1rem; margin: 0 0 .4rem; }
 .top a { color: #fff; text-decoration: none; }
 .brand { font-weight: 700; font-stretch: 118%; }
 .crumb { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; opacity: .85; }
-.logout { margin-left: auto; }
+.nav { margin-left: auto; }
+.logout { margin-left: 0; }
+.crumb + .nav { margin-left: auto; }
 .top .link { color: #fff; }
 main { max-width: 1180px; margin: 0 auto; padding: 1.75rem 16px 3rem; }
 footer { max-width: 1180px; margin: 0 auto; padding: 0 16px 2rem; color: var(--muted); font-size: .85rem; }
@@ -108,6 +110,14 @@ pre { background: var(--sheet); border: 1px solid var(--line); padding: .7rem; o
 .saved li { display: flex; gap: .6rem; }
 .inline { display: flex; gap: .7rem; align-items: end; flex-wrap: wrap; max-width: 480px; }
 .inline label { flex: 1; }
+
+.downloads { font-size: .9rem; color: var(--muted); display: flex; flex-wrap: wrap; gap: .2rem 1.1rem; margin: -1rem 0 1.5rem; }
+.up { color: var(--bad); } .down { color: #2f7d32; }
+.compare-pick { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 1.5rem; }
+fieldset { border: 1px solid var(--line); padding: .8rem 1rem; margin: 0; }
+legend { font-weight: 650; }
+tr.clickable, .clickable { cursor: pointer; }
+@media print { .top, footer, .downloads, .tabs { display: none; } }
 
 @media (max-width: 760px) {
   h1 { font-size: 1.6rem; }

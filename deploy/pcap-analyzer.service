@@ -1,0 +1,17 @@
+[Unit]
+Description=pcap-analyzer web interface
+After=network.target
+
+[Service]
+User=pcap-analyzer
+EnvironmentFile=/etc/pcap-analyzer.env
+Environment=PCAP_ANALYZER_WORKDIR=/var/lib/pcap-analyzer
+ExecStart=/opt/pcap-analyzer/bin/pcap-analyzer serve --host 0.0.0.0 --port 8000 --cert /etc/pcap-analyzer/cert.pem --key /etc/pcap-analyzer/key.pem
+Restart=on-failure
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/pcap-analyzer /tmp
+
+[Install]
+WantedBy=multi-user.target

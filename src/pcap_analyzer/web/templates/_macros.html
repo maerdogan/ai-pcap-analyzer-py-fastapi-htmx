@@ -18,7 +18,7 @@
   <li>
     <a href="/a/{{ a.id }}/txn/{{ t.id }}" class="req">
       <span class="what"><b>{{ t.status or "No reply" }}</b> {{ t.method }} {{ t.uri | truncate(70, True, "…") }}</span>
-      <span class="took">{{ t.total | seconds }}</span>
+      <span class="took">{{ t.longest | seconds }}</span>
     </a>
     <div class="bar" style="width:{{ ((t.longest / longest * 100) if longest else 0) | round(1) }}%">{{ strip(t.phases) }}</div>
     <p class="why"><b>{{ t.cause_label }}.</b> {{ t.explanation }}</p>

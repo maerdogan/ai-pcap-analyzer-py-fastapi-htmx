@@ -163,3 +163,43 @@ def test_html_is_escaped(client, samples, tmp_path):
     p.write_bytes((samples / "http_scenarios.pcap").read_bytes())
     upload(client, p)
     assert "<script>x" not in client.get("/").text
+
+
+def test_compare_page(client, samples):
+    a = upload(client, samples / "netscaler_front.pcap", {"keylog": samples / "netscaler_front.keylog"}).rsplit("/", 1)[1]
+    b = upload(client, samples / "netscaler_back.pcap").rsplit("/", 1)[1]
+    assert "Capture A" in client.get("/compare").text
+    p = client.get("/compare", params=dict(a=a, b=b)).text
+    assert "Summary" in p and "By URL" in p
+    p = client.get("/compare", params=dict(a=a, b=b, src_a="10.10.1.50", src_b="10.30.0.5")).text
+    assert "Summary" in p
+    p = client.get("/compare", params=dict(a=a, b=b, mode="points")).text
+    assert "2 matched by request ID" in p and "/api/b/3" in p
+    assert client.get("/compare", params=dict(a=a, b="0" * 20)).status_code == 404
+
+
+def test_compare_needs_two(client):
+    assert "at least two captures" in client.get("/compare").text
+
+
+def test_downloads(client, samples, tmp_path):
+    home = upload(client, samples / "http_scenarios.pcap")
+    aid = home.rsplit("/", 1)[1]
+    for name, fmt, sniff in (("urls", "csv", b"method"), ("requests", "json", b"["), ("hosts", "xlsx", b"PK")):
+        r = client.get(f"/export/{aid}/{name}.{fmt}")
+        assert r.status_code == 200 and sniff in r.content[:20] and "attachment" in r.headers["content-disposition"]
+    assert client.get(f"/export/{aid}/nope.csv").status_code == 404
+    assert client.get(f"/export/{aid}/urls.exe").status_code == 404
+    rep = client.get(f"/export/{aid}/report.html").text
+    assert "Where the time went" in rep and "<style>" in rep and "<script" not in rep
+    r = client.get(f"/export/{aid}/conn/2.pcapng")
+    assert r.status_code == 200 and r.content[:4] == b"\x0a\x0d\x0d\x0a"
+    out = tmp_path / "one.pcapng"
+    out.write_bytes(r.content)
+    from pcap_analyzer.tshark import packets
+    assert {p["tcp.dstport"] for p in packets(out)} == {"8080", "40003"}
+    assert client.get(f"/export/{aid}/conn/999.pcapng").status_code == 404
+
+
+def test_download_needs_login(anon):
+    assert anon.get("/export/" + "0" * 20 + "/urls.csv").status_code == 303
