@@ -1,3 +1,7 @@
+{% macro mark() %}
+<svg class="mark" viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><rect x="2" y="4" width="11" height="4"/><rect x="2" y="10" width="20" height="4"/><rect x="2" y="16" width="6" height="4"/></svg>
+{% endmacro %}
+
 {% macro strip(phases) %}
 {% set total = phases | sum(attribute="seconds") %}
 <div class="strip" role="img" aria-label="{% for p in phases %}{{ p.label }} {{ p.seconds | seconds }}{% if not loop.last %}, {% endif %}{% endfor %}">
@@ -5,33 +9,45 @@
 </div>
 {% endmacro %}
 
-{% macro legend(phases) %}
-<ul class="legend">
-  {% for p in phases %}<li><i class="ph-{{ p.name }}"></i>{{ p.label }} <b>{{ p.seconds | seconds }}</b></li>{% endfor %}
-</ul>
+{% macro breakdown(phases) %}
+{% set total = phases | sum(attribute="seconds") %}
+<table class="breakdown">
+  <thead><tr><th>Phase</th><th class="num">Time</th><th class="num">Share</th></tr></thead>
+  <tbody>
+    {% for p in phases | sort(attribute="seconds", reverse=True) %}
+    <tr><td><i class="swatch ph-{{ p.name }}"></i>{{ p.label }}</td><td class="num">{{ p.seconds | seconds }}</td><td class="num">{{ "%.1f" | format(p.seconds / total * 100) if total else 0 }}%</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
 {% endmacro %}
 
-{% macro waterfall(rows, a) %}
+{% macro status(code) %}
+<span class="status s{{ (code // 100) if code else 0 }}">{{ code or "None" }}</span>
+{% endmacro %}
+
+{% macro waterfall(rows, a, link=True) %}
 {% set longest = rows | map(attribute="longest") | max if rows else 0 %}
 <ol class="waterfall">
   {% for t in rows %}
   <li>
-    <a href="/a/{{ a.id }}/txn/{{ t.id }}" class="req">
-      <span class="what"><b>{{ t.status or "No reply" }}</b> {{ t.method }} {{ t.uri | truncate(70, True, "…") }}</span>
-      <span class="took">{{ t.longest | seconds }}</span>
-    </a>
-    <div class="bar" style="width:{{ ((t.longest / longest * 100) if longest else 0) | round(1) }}%">{{ strip(t.phases) }}</div>
-    <p class="why"><b>{{ t.cause_label }}.</b> {{ t.explanation }}</p>
+    {{ status(t.status) }}
+    <div class="wf-main">
+      {% if link %}<a class="wf-url" href="/a/{{ a.id }}/txn/{{ t.id }}">{{ t.method }} {{ t.uri | truncate(90, True, "…") }}</a>
+      {% else %}<span class="wf-url">{{ t.method }} {{ t.uri | truncate(90, True, "…") }}</span>{% endif %}
+      <p class="why"><b>{{ t.cause_label }}.</b> {{ t.explanation }}</p>
+    </div>
+    <div class="wf-bar"><div class="bar" style="width:{{ ((t.longest / longest * 100) if longest else 0) | round(1) }}%">{{ strip(t.phases) }}</div></div>
+    <span class="took">{{ t.longest | seconds }}</span>
   </li>
   {% endfor %}
 </ol>
 {% endmacro %}
 
 {% macro stats(s) %}
-<dl class="stats">
+<dl class="metrics">
   <div><dt>Requests</dt><dd>{{ s.requests or 0 }}</dd></div>
   <div><dt>Successful</dt><dd>{{ s.ok or 0 }}</dd></div>
-  <div><dt>Failed</dt><dd>{{ s.failed or 0 }}</dd></div>
+  <div {% if s.failed %}class="alert"{% endif %}><dt>Failed</dt><dd>{{ s.failed or 0 }}</dd></div>
   <div><dt>Average</dt><dd>{{ s.avg_total | seconds }}</dd></div>
   <div><dt>Median</dt><dd>{{ s.p50_total | seconds }}</dd></div>
   <div><dt>95th percentile</dt><dd>{{ s.p95_total | seconds }}</dd></div>
@@ -39,4 +55,14 @@
 </dl>
 {% endmacro %}
 
-{% macro crumb(a) %}<a class="crumb" href="/a/{{ a.id }}">{{ a.meta.filename }}</a>{% endmacro %}
+{% macro capnav(a, current, issue_count=0) %}
+<nav class="side-nav capture" aria-label="Capture views">
+  <p class="side-file" title="{{ a.meta.filename }}">{{ a.meta.filename }}</p>
+  <a href="/a/{{ a.id }}" {% if current == "overview" %}aria-current="page"{% endif %}>Overview</a>
+  <a href="/a/{{ a.id }}?tab=issues" {% if current == "issues" %}aria-current="page"{% endif %}>Issues{% if issue_count %}<span class="count">{{ issue_count }}</span>{% endif %}</a>
+  <a href="/a/{{ a.id }}?tab=urls" {% if current == "urls" %}aria-current="page"{% endif %}>URLs</a>
+  <a href="/a/{{ a.id }}?tab=connections" {% if current == "connections" %}aria-current="page"{% endif %}>Connections</a>
+  <a href="/a/{{ a.id }}?tab=hosts" {% if current == "hosts" %}aria-current="page"{% endif %}>Hosts</a>
+  <a href="/a/{{ a.id }}/inspect" {% if current == "inspect" %}aria-current="page"{% endif %}>Inspect traffic</a>
+</nav>
+{% endmacro %}

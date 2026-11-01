@@ -45,12 +45,12 @@
       el.dataset.ready = "1";
       const opts = GRIDS[el.dataset.grid](el.dataset.base);
       const rows = await (await fetch(el.dataset.src)).json();
-      agGrid.createGrid(el, { ...opts, rowData: rows, defaultColDef: { sortable: true, resizable: true }, suppressCellFocus: true,
-        rowClass: opts.onRowClicked ? "clickable" : undefined });
+      agGrid.createGrid(el, { ...opts, rowData: rows, defaultColDef: { sortable: true, resizable: true }, suppressCellFocus: true, rowHeight: 34, headerHeight: 36,
+        rowClass: opts.onRowClicked ? "clickable" : undefined, domLayout: "normal" });
     });
   }
 
-  const INK = "#14263a", MUTED = "#55677a", LINE = "#c9d3db";
+  const INK = "#152130", MUTED = "#5b6b7b", LINE = "#dce2e8";
   function download(url, name) {
     Object.assign(document.createElement("a"), { href: url, download: name }).click();
   }
@@ -70,7 +70,7 @@
       b.addEventListener("click", onClick);
       bar.append(b);
     };
-    add("Save as PNG", () => download(chart.getDataURL({ type: "png", pixelRatio: 2, backgroundColor: "#edf1f4" }), el.dataset.name + ".png"));
+    add("Save as PNG", () => download(chart.getDataURL({ type: "png", pixelRatio: 2, backgroundColor: "#ffffff" }), el.dataset.name + ".png"));
     add("Save as SVG", () => saveSvg(option, el.dataset.name, el));
     el.after(bar);
   }
@@ -79,14 +79,14 @@
       grid: { left: 44, right: 12, top: 30, bottom: 56 }, tooltip: {},
       xAxis: { type: "category", data: data.map((d) => d.label), axisLabel: { rotate: 40, color: MUTED }, axisLine: { lineStyle: { color: LINE } } },
       yAxis: { type: "value", minInterval: 1, axisLabel: { color: MUTED }, splitLine: { lineStyle: { color: LINE } } },
-      series: [{ type: "bar", data: data.map((d) => d.requests), itemStyle: { color: "#1f7fbf" }, barCategoryGap: "12%" }],
+      series: [{ type: "bar", data: data.map((d) => d.requests), itemStyle: { color: "#2f7fd1" }, barCategoryGap: "12%" }],
     }),
     statuses: (data) => ({
       grid: { left: 50, right: 12, top: 30, bottom: 28 }, tooltip: {},
       xAxis: { type: "value", minInterval: 1, axisLabel: { color: MUTED }, splitLine: { lineStyle: { color: LINE } } },
       yAxis: { type: "category", inverse: true, data: data.map((d) => d.class), axisLabel: { color: INK } },
       series: [{ type: "bar", data: data.map((d) => ({ value: d.requests,
-        itemStyle: { color: /^[45]|none/.test(d.class) ? "#c4314b" : "#4f9d4f" } })) }],
+        itemStyle: { color: /^[45]|none/.test(d.class) ? "#c8324a" : "#3e9b5f" } })) }],
     }),
   };
 

@@ -1,10 +1,11 @@
 {% extends "base.html" %}
-{% block title %}Your captures{% endblock %}
+{% block title %}Captures{% endblock %}
 {% block main %}
-<section class="upload">
-  <h1>Analyze a capture</h1>
-  <form hx-post="/upload" hx-encoding="multipart/form-data" hx-target="#job" hx-swap="innerHTML">
-    <label class="drop">Capture file, up to {{ max_mb }} MB
+<header class="page-head"><div><h1>Captures</h1><p class="muted">Upload a capture, or open one you analyzed earlier.</p></div></header>
+<section class="panel">
+  <h2>Analyze a capture</h2>
+  <form hx-post="/upload" hx-encoding="multipart/form-data" hx-target="#job" hx-swap="innerHTML" hx-disabled-elt="find button.primary">
+    <label class="drop"><span>Capture file, up to {{ max_mb }} MB (.cap, .pcap, .pcapng)</span>
       <input type="file" name="capture" required>
     </label>
     <details>
@@ -31,21 +32,20 @@
   <div id="job" aria-live="polite"></div>
 </section>
 <section>
-  <h2>Your captures</h2>
+  <div class="section-head"><h2>Analyzed captures</h2>{% if analyses %}<span class="hint">Kept for {{ ttl }} days. Everyone with the login sees this list.</span>{% endif %}</div>
   {% if analyses %}
-  <p class="hint">Kept for {{ ttl }} days. Everyone with the login sees this list.</p>
-  <div class="scroll"><table>
+  <div class="table-wrap"><table>
     <thead><tr><th>File</th><th>Analyzed</th><th class="num">Size</th><th class="num">Connections</th><th class="num">Requests</th><th></th></tr></thead>
     <tbody>
     {% for m in analyses %}
       <tr>
         <td><a href="/a/{{ m.id }}">{{ m.filename }}</a>{% if m.filter %}<br><span class="hint">{{ m.filter }}</span>{% endif %}</td>
         <td>{{ m.created | when }}</td><td class="num">{{ m.size | size }}</td><td class="num">{{ m.connections }}</td><td class="num">{{ m.transactions }}</td>
-        <td><form method="post" action="/a/{{ m.id }}/delete"><button class="link danger" aria-label="Delete {{ m.filename }}">Delete</button></form></td>
+        <td class="num"><form method="post" action="/a/{{ m.id }}/delete"><button class="link danger" aria-label="Delete {{ m.filename }}">Delete</button></form></td>
       </tr>
     {% endfor %}
     </tbody>
   </table></div>
-  {% else %}<p>Nothing here yet. Upload a capture above to see where its time went.</p>{% endif %}
+  {% else %}<p class="empty">Nothing here yet. Upload a capture above to see where its time went.</p>{% endif %}
 </section>
 {% endblock %}

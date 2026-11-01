@@ -1,3 +1,4 @@
+{% import "_macros.html" as ui %}
 <!doctype html>
 <html lang="en">
 <head>
@@ -13,14 +14,19 @@
   <script src="/static/vendor/echarts.min.js" defer></script>
   <script src="/static/app.js?v={{ version }}" defer></script>
 </head>
-<body>
-  <header class="top">
-    <a class="brand" href="/">pcap-analyzer</a>
-    {% block crumb %}{% endblock %}
-    <a class="nav" href="/compare">Compare</a>
-    <form method="post" action="/logout" class="logout"><button class="link">Sign out</button></form>
-  </header>
-  <main>{% block main %}{% endblock %}</main>
-  <footer>pcap-analyzer {{ version }}</footer>
+<body class="shell">
+  <aside class="side">
+    <a class="brand" href="/">{{ ui.mark() }}<span>pcap-analyzer</span></a>
+    <nav class="side-nav" aria-label="Main">
+      <a href="/" {% if section == "captures" %}aria-current="page"{% endif %}>Captures</a>
+      <a href="/compare" {% if section == "compare" %}aria-current="page"{% endif %}>Compare</a>
+    </nav>
+    {% block capture_nav %}{% endblock %}
+    <div class="side-foot">
+      <form method="post" action="/logout"><button class="side-link">Sign out</button></form>
+      <span>Version {{ version }}</span>
+    </div>
+  </aside>
+  <main class="page">{% block main %}{% endblock %}</main>
 </body>
 </html>

@@ -1,19 +1,27 @@
 {% extends "base.html" %}
 {% import "_macros.html" as ui %}
 {% block title %}{{ m.filename }}{% endblock %}
-{% block crumb %}{{ ui.crumb(a) }}{% endblock %}
+{% block capture_nav %}{{ ui.capnav(a, tab, issue_count) }}{% endblock %}
 {% block main %}
-<nav class="tabs" aria-label="Views">
-  {% for key, label in tabs.items() %}
-  <a href="/a/{{ a.id }}?tab={{ key }}" hx-get="/a/{{ a.id }}?tab={{ key }}" hx-target="#tab" hx-push-url="true" {% if key == tab %}aria-current="page"{% endif %}>{{ label }}</a>
-  {% endfor %}
-  <a href="/a/{{ a.id }}/inspect">Inspect traffic</a>
-</nav>
-<p class="downloads">Download:
-  <a href="/export/{{ a.id }}/report.html">Report</a>
-  {% for n, l in [("requests", "Requests"), ("urls", "URLs"), ("connections", "Connections"), ("hosts", "Hosts"), ("issues", "Issues")] %}
-  <span>{{ l }} <a href="/export/{{ a.id }}/{{ n }}.csv" aria-label="{{ l }} as CSV">CSV</a> <a href="/export/{{ a.id }}/{{ n }}.xlsx" aria-label="{{ l }} as Excel">Excel</a> <a href="/export/{{ a.id }}/{{ n }}.json" aria-label="{{ l }} as JSON">JSON</a></span>
-  {% endfor %}
-</p>
+<header class="page-head">
+  <div>
+    <h1>{{ tabs[tab] }}</h1>
+    <p class="muted">{{ m.filename }}, {{ m.size | size }}, {{ m.packets }} packets. Captured {{ m.capture_start | when }}.</p>
+  </div>
+  <div class="actions">
+    <details class="menu">
+      <summary>Download</summary>
+      <div class="menu-body">
+        <a href="/export/{{ a.id }}/report.html">Full report (HTML)</a>
+        <table>
+          {% for n, l in [("requests", "Requests"), ("urls", "URLs"), ("connections", "Connections"), ("hosts", "Hosts"), ("issues", "Issues")] %}
+          <tr><td>{{ l }}</td><td><a href="/export/{{ a.id }}/{{ n }}.csv" aria-label="{{ l }} as CSV">CSV</a></td><td><a href="/export/{{ a.id }}/{{ n }}.xlsx" aria-label="{{ l }} as Excel">Excel</a></td><td><a href="/export/{{ a.id }}/{{ n }}.json" aria-label="{{ l }} as JSON">JSON</a></td></tr>
+          {% endfor %}
+        </table>
+      </div>
+    </details>
+    <a class="button primary" href="/a/{{ a.id }}/inspect">Inspect traffic</a>
+  </div>
+</header>
 <div id="tab">{% include "_tab_" ~ tab ~ ".html" %}</div>
 {% endblock %}

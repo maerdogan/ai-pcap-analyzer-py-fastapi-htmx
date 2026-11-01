@@ -20,6 +20,7 @@ All changes made on the same day are one minor version.
 - Export of tables to CSV, Excel and JSON, charts to PNG and SVG, a single-file HTML report, and one connection as PCAP.
 - Container image, Compose file, Kubernetes manifests, systemd unit and install guide.
 - Command line: `analyze`, `report`, `connection`, `inspect`, `compare`, `list`, `delete`, `purge`, `serve` and `hash-password`.
+- Professional interface layout: side navigation, metrics band, sorted time breakdown and aligned slowest-request tables.
 - Synthetic sample generator with known timings, used by the tests.
 
 ### Fixed

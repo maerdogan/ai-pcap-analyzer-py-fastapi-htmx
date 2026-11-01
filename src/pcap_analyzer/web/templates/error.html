@@ -1,2 +1,6 @@
 {% extends "base.html" %}
-{% block main %}<h1>This page cannot be shown</h1><p class="error" role="alert">{{ message }}</p><p><a href="/">Go to your captures</a></p>{% endblock %}
+{% block main %}
+<header class="page-head"><div><h1>This page cannot be shown</h1></div></header>
+<p class="error" role="alert">{{ message }}</p>
+<p><a href="/">Go to your captures</a></p>
+{% endblock %}

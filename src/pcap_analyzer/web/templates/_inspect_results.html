@@ -1,11 +1,11 @@
 {% import "_macros.html" as ui %}
 {% if r.connections.connections == 0 %}
-<p class="lead">Nothing in this capture matches. Check the addresses, or clear a filter.</p>
+<p class="empty">Nothing in this capture matches. Check the addresses, or clear a filter.</p>
 {% else %}
-<section>
+{{ ui.stats(r.requests) }}
+<section class="panel">
   <h2>Summary</h2>
-  {{ ui.stats(r.requests) }}
-  <dl class="stats">
+  <dl class="facts">
     <div><dt>TCP connections</dt><dd>{{ r.connections.connections }}</dd></div>
     <div><dt>Successful</dt><dd>{{ r.connections.ok }}</dd></div>
     <div><dt>Carrying HTTP</dt><dd>{{ r.connections.http }}</dd></div>
@@ -17,7 +17,7 @@
 {% if r.urls %}
 <section>
   <h2>By URL</h2>
-  <div class="scroll"><table>
+  <div class="table-wrap"><table>
     <thead><tr><th>Method</th><th>URL</th><th class="num">Requests</th><th class="num">Failed</th><th class="num">Average</th><th class="num">95th percentile</th><th class="num">Slowest</th><th>Status</th></tr></thead>
     <tbody>{% for u in r.urls %}
       <tr><td>{{ u.method }}</td><td>{{ u.url }}</td><td class="num">{{ u.requests }}</td><td class="num">{{ u.failed }}</td><td class="num">{{ u.avg_total | seconds }}</td><td class="num">{{ u.p95_total | seconds }}</td><td class="num">{{ u.max_total | seconds }}</td>
@@ -26,5 +26,5 @@
   </table></div>
 </section>
 {% endif %}
-{% if r.slowest %}<section><h2>Slowest {{ r.slowest | length }} requests</h2>{{ ui.waterfall(r.slowest, a) }}</section>{% endif %}
+{% if r.slowest %}<section class="panel flush"><h2>Slowest {{ r.slowest | length }} requests</h2>{{ ui.waterfall(r.slowest, a) }}</section>{% endif %}
 {% endif %}

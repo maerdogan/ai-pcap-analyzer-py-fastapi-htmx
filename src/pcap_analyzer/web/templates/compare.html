@@ -2,11 +2,11 @@
 {% import "_macros.html" as ui %}
 {% block title %}Compare captures{% endblock %}
 {% block main %}
-<h1>Compare captures</h1>
+<header class="page-head"><div><h1>Compare captures</h1><p class="muted">See what changed between two captures, or how the same traffic looks at two points.</p></div></header>
 {% if analyses | length < 2 %}
-<p class="lead">Analyze at least two captures first. They will appear here.</p>
-<p><a href="/">Go to your captures</a></p>
+<p class="empty">Analyze at least two captures first. They will appear here. <a href="/">Go to your captures</a></p>
 {% else %}
+<section class="panel">
 <form method="get" action="/compare">
   <div class="compare-pick">
     {% for side, name in [("a", "Capture A"), ("b", "Capture B")] %}
@@ -32,13 +32,14 @@
   <label class="check"><input type="radio" name="mode" value="points" {% if q.mode == "points" %}checked{% endif %}> Same traffic at two points: match each request. A is nearer the client</label>
   <button class="primary">Compare</button>
 </form>
+</section>
 {% endif %}
 
 {% if result %}
 {% for n in result.notes %}<p class="warn">{{ n }}</p>{% endfor %}
 <section>
   <h2>Summary</h2>
-  <div class="scroll"><table>
+  <div class="table-wrap"><table>
     <thead><tr><th>Measure</th><th class="num">A</th><th class="num">B</th><th class="num">Change</th><th class="num">%</th></tr></thead>
     <tbody>{% for s in result.summary %}
       <tr><td>{{ s.label }}</td>
@@ -51,7 +52,7 @@
 </section>
 <section>
   <h2>Average time per phase</h2>
-  <div class="scroll"><table>
+  <div class="table-wrap"><table>
     <thead><tr><th>Phase</th><th class="num">A</th><th class="num">B</th><th class="num">Change</th></tr></thead>
     <tbody>{% for p in result.phases %}
       <tr><td>{{ p.name | replace("_clean", "") | replace("_time", "") | replace("_", " ") | capitalize }}</td><td class="num">{{ p.a | seconds }}</td><td class="num">{{ p.b | seconds }}</td>
@@ -61,7 +62,7 @@
 </section>
 <section>
   <h2>By URL, largest change first</h2>
-  <div class="scroll"><table>
+  <div class="table-wrap"><table>
     <thead><tr><th>Method</th><th>URL</th><th class="num">Requests A</th><th class="num">Requests B</th><th class="num">Failed A</th><th class="num">Failed B</th><th class="num">Average A</th><th class="num">Average B</th><th class="num">Change</th></tr></thead>
     <tbody>{% for u in result.urls %}
       <tr><td>{{ u.method }}</td><td>{{ u.url }}{% if u.only_in %} <span class="hint">only in {{ u.only_in }}</span>{% elif u.few %} <span class="hint">few samples</span>{% endif %}</td>
@@ -71,20 +72,18 @@
     {% endfor %}</tbody>
   </table></div>
 </section>
-<section class="two">
-  <div><h2>Slowest in A</h2>{{ ui.waterfall(result.slowest_a[:5], a) }}</div>
-  <div><h2>Slowest in B</h2>{{ ui.waterfall(result.slowest_b[:5], b) }}</div>
-</section>
+<section class="panel flush"><h2>Slowest in A</h2>{{ ui.waterfall(result.slowest_a[:5], a) }}</section>
+<section class="panel flush"><h2>Slowest in B</h2>{{ ui.waterfall(result.slowest_b[:5], b) }}</section>
 {% endif %}
 
 {% if points %}
 <section>
   <h2>Same requests at two points</h2>
-  <p class="lead">{{ points.exact }} matched by request ID, {{ points.likely }} by URL and time. {{ points.unmatched_a }} in A and {{ points.unmatched_b }} in B have no match.</p>
+  <p>{{ points.exact }} matched by request ID, {{ points.likely }} by URL and time. {{ points.unmatched_a }} in A and {{ points.unmatched_b }} in B have no match.</p>
   {% if points.clock_known %}<p class="hint">Clock difference between the captures, taken from exact matches: {{ (points.clock_offset * 1000) | round(1) }} ms.</p>
   {% else %}<p class="warn">No shared request IDs, so the two clocks are assumed to agree. Delays between the points are only as good as that assumption.</p>{% endif %}
   {% if points.rows %}
-  <div class="scroll"><table>
+  <div class="table-wrap"><table>
     <thead><tr><th>Match</th><th>Request</th><th class="num">Status</th><th class="num">Total at A</th><th class="num">Total at B</th><th class="num">Added between points</th><th class="num">Delay toward B</th><th class="num">Delay back</th></tr></thead>
     <tbody>{% for r in points.rows %}
       <tr><td>{{ r.match | capitalize }}</td><td><a href="/a/{{ a.id }}/txn/{{ r.id_a }}">{{ r.method }} {{ r.uri | truncate(60, True, "…") }}</a></td><td class="num">{{ r.status or "–" }}</td>

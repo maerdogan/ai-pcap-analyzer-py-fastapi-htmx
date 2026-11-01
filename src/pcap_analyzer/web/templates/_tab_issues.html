@@ -1,6 +1,5 @@
-<section>
-  <h1>Issues</h1>
-  {% if issues %}
+{% if issues %}
+<section class="panel flush">
   <ul class="issues">
     {% for i in issues %}
     <li class="sev-{{ i.severity }}">
@@ -12,5 +11,5 @@
     </li>
     {% endfor %}
   </ul>
-  {% else %}<p>No problems stand out in this capture.</p>{% endif %}
 </section>
+{% else %}<p class="empty">No problems stand out in this capture.</p>{% endif %}

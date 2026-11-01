@@ -1,21 +1,37 @@
 {% extends "base.html" %}
 {% import "_macros.html" as ui %}
 {% block title %}Connection {{ d.conn.stream }}{% endblock %}
-{% block crumb %}{{ ui.crumb(a) }}{% endblock %}
+{% block capture_nav %}{{ ui.capnav(a, "connections", issue_count) }}{% endblock %}
 {% block main %}
 {% set c = d.conn %}
-<p><a href="/a/{{ a.id }}?tab=connections">All connections</a></p>
-<h1>{{ c.client_ip }}:{{ c.client_port }} to {{ c.server_ip }}:{{ c.server_port }}</h1>
-<p class="lead">{{ c.kind }}, {{ d.total }} requests, open for {{ c.duration | seconds }}.
-  {% if c.close_type %}Closed by the {{ c.closed_by }} with {{ c.close_type }}.{% else %}Still open when the capture ended.{% endif %}</p>
-{% if m.capture_kept %}<p><a href="/export/{{ a.id }}/conn/{{ c.stream }}.pcapng">Download this connection as PCAP</a></p>{% endif %}
-<section>
+<p class="back"><a href="/a/{{ a.id }}?tab=connections">Connections</a></p>
+<header class="page-head">
+  <div>
+    <h1>{{ c.client_ip }}:{{ c.client_port }} to {{ c.server_ip }}:{{ c.server_port }}</h1>
+    <p class="muted">{{ c.kind }}, {{ d.total }} requests, open for {{ c.duration | seconds }}.
+    {% if c.close_type %}Closed by the {{ c.closed_by }} with {{ c.close_type }}.{% else %}Still open when the capture ended.{% endif %}</p>
+  </div>
+  {% if m.capture_kept %}<div class="actions"><a class="button" href="/export/{{ a.id }}/conn/{{ c.stream }}.pcapng">Download this connection as PCAP</a></div>{% endif %}
+</header>
+{% if d.top %}
+<section class="panel flush">
+  <div class="section-head">
+    <h2>Slowest requests</h2>
+    <p class="switch">
+      <a href="?percent=false" {% if not percent %}aria-current="true"{% endif %}>First 5</a>
+      <a href="?percent=true" {% if percent %}aria-current="true"{% endif %}>Top 10%</a>
+    </p>
+  </div>
+  {{ ui.waterfall(d.top, a) }}
+</section>
+{% endif %}
+<section class="panel">
   <h2>TCP details</h2>
-  <dl class="stats">
+  <dl class="facts">
     <div><dt>Connect time</dt><dd>{{ c.connect_time | seconds }}</dd></div>
     <div><dt>Round trip to server</dt><dd>{{ c.rtt_server | seconds }}</dd></div>
     <div><dt>Round trip to client</dt><dd>{{ c.rtt_client | seconds }}</dd></div>
-    <div><dt>Capture point</dt><dd>{{ c.capture_point | replace("_", " ") }}</dd></div>
+    <div><dt>Capture point</dt><dd>{{ c.capture_point | replace("_", " ") | capitalize }}</dd></div>
     <div><dt>MSS</dt><dd>{{ c.mss or "–" }}</dd></div>
     <div><dt>SACK</dt><dd>{{ "Yes" if c.sack else "No" }}</dd></div>
     <div><dt>Window scale</dt><dd>{{ c.wscale if c.wscale is not none else "–" }}</dd></div>
@@ -29,16 +45,4 @@
     {% if c.sni %}<div><dt>Server name</dt><dd>{{ c.sni }}</dd></div>{% endif %}
   </dl>
 </section>
-{% if d.top %}
-<section>
-  <div class="head-row">
-    <h2>Slowest requests</h2>
-    <p class="switch">
-      <a href="?percent=false" {% if not percent %}aria-current="true"{% endif %}>First 5</a>
-      <a href="?percent=true" {% if percent %}aria-current="true"{% endif %}>Top 10%</a>
-    </p>
-  </div>
-  {{ ui.waterfall(d.top, a) }}
-</section>
-{% endif %}
 {% endblock %}

@@ -115,6 +115,11 @@ def create_app(settings=None, secure_cookie=False):
     def page(request, name, **ctx):
         return templates.TemplateResponse(request, name, ctx)
 
+    def capture_ctx(a):
+        """What every capture page needs for its navigation."""
+        with a.connect() as db:
+            return dict(a=a, m=a.meta, issue_count=sum(i["count"] for i in reports.issues(db, a.meta) if i["severity"] == 1))
+
     def is_htmx(request):
         return request.headers.get("hx-request") == "true"
 
@@ -185,7 +190,7 @@ def create_app(settings=None, secure_cookie=False):
 
     @app.get("/", response_class=HTMLResponse)
     def home(request: Request):
-        return page(request, "home.html", analyses=engine.list_analyses(settings), max_mb=settings.max_size_mb, ttl=settings.ttl_days)
+        return page(request, "home.html", section="captures", analyses=engine.list_analyses(settings), max_mb=settings.max_size_mb, ttl=settings.ttl_days)
 
     @app.post("/upload", response_class=HTMLResponse)
     async def upload(request: Request, capture: UploadFile, keylog: UploadFile | None = None, rsa_key: UploadFile | None = None,
@@ -242,7 +247,7 @@ def create_app(settings=None, secure_cookie=False):
             _bad("This view does not exist.", 404)
         a = opened(aid)
         name = "analysis.html" if not is_htmx(request) else f"_tab_{tab}.html"
-        return page(request, name, a=a, m=a.meta, tab=tab, **tab_context(a, tab))
+        return page(request, name, tab=tab, **capture_ctx(a), **tab_context(a, tab))
 
     @app.get("/a/{aid}/issue/{key}", response_class=HTMLResponse)
     def issue(request: Request, aid: str, key: str):
@@ -251,7 +256,7 @@ def create_app(settings=None, secure_cookie=False):
             d = reports.issue_detail(db, key)
         if d is None:
             _bad("This issue does not exist.", 404)
-        return page(request, "issue.html", a=a, m=a.meta, d=d)
+        return page(request, "issue.html", d=d, **capture_ctx(a))
 
     @app.get("/a/{aid}/conn/{stream}", response_class=HTMLResponse)
     def connection(request: Request, aid: str, stream: int, percent: bool = False):
@@ -261,7 +266,7 @@ def create_app(settings=None, secure_cookie=False):
             if d["conn"] is None:
                 _bad("This connection does not exist.", 404)
             d["top"] = [reports.describe(db, t) for t in d["top"]]
-        return page(request, "connection.html", a=a, m=a.meta, d=d, percent=percent)
+        return page(request, "connection.html", d=d, percent=percent, **capture_ctx(a))
 
     @app.get("/a/{aid}/txn/{tid}", response_class=HTMLResponse)
     def transaction(request: Request, aid: str, tid: int):
@@ -270,7 +275,7 @@ def create_app(settings=None, secure_cookie=False):
             t = reports.transaction(db, tid)
         if t is None:
             _bad("This request does not exist.", 404)
-        return page(request, "transaction.html", a=a, m=a.meta, t=t)
+        return page(request, "transaction.html", t=t, **capture_ctx(a))
 
     def inspect_filter(q):
         size_of = q.get("size_of") or "total"
@@ -288,7 +293,7 @@ def create_app(settings=None, secure_cookie=False):
             r = reports.inspect(db, f)
             pairs = reports.rows(db, """SELECT DISTINCT client_ip, server_ip, server_port, kind, count(*) AS connections
                 FROM tcp_connections GROUP BY ALL ORDER BY connections DESC LIMIT 200""")
-        ctx = dict(a=a, m=a.meta, r=r, q=q, query=str(request.url.query), pairs=pairs, kinds=sorted({p["kind"] for p in pairs}), filters=saved.load(settings))
+        ctx = dict(r=r, q=q, query=str(request.url.query), pairs=pairs, kinds=sorted({p["kind"] for p in pairs}), filters=saved.load(settings), **capture_ctx(a))
         return page(request, "_inspect_results.html" if is_htmx(request) else "inspect.html", **ctx)
 
     @app.post("/filters")
@@ -316,7 +321,7 @@ def create_app(settings=None, secure_cookie=False):
     @app.get("/compare", response_class=HTMLResponse)
     def compare_page(request: Request):
         q = dict(request.query_params)
-        ctx = dict(q=q, analyses=engine.list_analyses(settings), result=None, points=None, a=None, b=None)
+        ctx = dict(section="compare", q=q, analyses=engine.list_analyses(settings), result=None, points=None, a=None, b=None)
         if q.get("a") and q.get("b"):
             a, b = opened(q["a"]), opened(q["b"])
             ctx.update(a=a, b=b)
