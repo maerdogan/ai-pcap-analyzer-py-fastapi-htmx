@@ -24,9 +24,10 @@ check_host() {
 unpack() {
   ls "$HERE"/bundle/runtime-linux-x86_64.tar.gz.part-* >/dev/null 2>&1 ||
     die "bundle/ is empty. Run ./build-bundle.sh on a machine with internet first"
-  if cmp -s "$HERE/bundle/runtime.sha256" "$RUNTIME/.bundle.sha256"; then
-    return
-  fi
+  local unpacked=
+  [[ -f $RUNTIME/.bundle.sha256 ]] && unpacked=$(<"$RUNTIME/.bundle.sha256")
+  [[ $unpacked == "$(<"$HERE/bundle/runtime.sha256")" ]] && return 0
+  command -v tar >/dev/null || die "tar is needed to unpack the runtime"
   echo "Unpacking the runtime..."
   rm -rf "$RUNTIME"
   cat "$HERE"/bundle/runtime-linux-x86_64.tar.gz.part-* | tar xzf - -C "$HERE"

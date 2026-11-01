@@ -1,8 +1,10 @@
-# Run without containers
+# Linux server, glibc 2.26 or newer
 
 Run pcap-analyzer on a Linux server as a normal user. You do not need sudo, Docker, systemd or internet access. Read the [security section](../README.md#security) first.
 
-The server needs Linux x86_64 with glibc 2.26 or newer, such as RHEL 8, Ubuntu 18.04 or SLES 15. CentOS 7 and RHEL 7 are too old. `bundle/` includes Python, every Python package and tshark, so you do not install them.
+The server needs Linux x86_64 with glibc 2.26 or newer, `tar` and `gzip`. CentOS 7 and RHEL 7 are too old. `bundle/` includes Python 3.13, every Python package and tshark 4.6, so you do not install them.
+
+Tested with Ubuntu 18.04, Rocky Linux 8 and openSUSE Leap 15.0, in containers without network access. The folder must not be on a disk mounted with `noexec`.
 
 ## Start
 

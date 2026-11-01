@@ -37,7 +37,13 @@ pcap-analyzer analyze capture.pcap --keylog keys.log --host 10.0.0.5 --port 8080
 pcap-analyzer inspect ANALYSIS_ID --src 10.0.0.5 --dst 10.0.0.9 --port 8080
 ```
 
-See [docs/install.md](docs/install.md) for Docker, Kubernetes, offline installs and settings. To run without Docker or sudo, see [legacy-linux-server](legacy-linux-server/README.md).
+Each environment has its own folder. See [docs/install.md](docs/install.md) for install steps and settings.
+
+| Folder | Environment |
+|---|---|
+| [kubernetes](kubernetes) | Kubernetes manifests |
+| [docker](docker) | Docker or Podman, also the image for Kubernetes |
+| [linux-glibc2.26-server](linux-glibc2.26-server/README.md) | Linux with glibc 2.26 or newer, without sudo, Docker or internet |
 
 ## Development
 

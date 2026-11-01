@@ -15,7 +15,7 @@ Everything below works without internet on the target host once the files are co
 On a machine with internet, build and save the image:
 
 ```bash
-docker build -f Containerfile -t pcap-analyzer:0.1.0 .
+docker build -f docker/Containerfile -t pcap-analyzer:0.1.0 .
 docker save pcap-analyzer:0.1.0 | gzip > pcap-analyzer-0.1.0.tar.gz
 ```
 
@@ -23,6 +23,7 @@ On the target host, load it and start it:
 
 ```bash
 gunzip -c pcap-analyzer-0.1.0.tar.gz | docker load
+cd docker
 cp .env.example .env
 docker compose up -d --no-build
 ```
@@ -31,7 +32,7 @@ Compose publishes port 8000 on localhost only. Put an HTTPS proxy in front of it
 
 ## Kubernetes
 
-Push the image to your internal registry, then set the image and host names in `kubernetes/generic/`.
+Build the image as shown above and push it to your internal registry, then set the image and host names in `kubernetes/generic/`.
 
 ```bash
 kubectl create namespace pcap-analyzer
@@ -49,7 +50,7 @@ kubectl -n pcap-analyzer port-forward deploy/pcap-analyzer 8000:8000
 
 ## Linux server without sudo
 
-[legacy-linux-server](../legacy-linux-server/README.md) runs the app as a normal user from one folder, with Python, its packages and tshark included. It needs no Docker, systemd or internet.
+[linux-glibc2.26-server](../linux-glibc2.26-server/README.md) runs the app as a normal user from one folder, with Python, its packages and tshark included. It needs no Docker, systemd or internet.
 
 ## Linux server with systemd
 
@@ -66,13 +67,13 @@ python3 -m venv /opt/pcap-analyzer
 /opt/pcap-analyzer/bin/pip install --no-index --find-links wheels ai-pcap-analyzer-py-fastapi-htmx
 sudo useradd --system pcap-analyzer
 sudo install -d -o pcap-analyzer -m 700 /var/lib/pcap-analyzer
-sudo install -m 600 .env.example /etc/pcap-analyzer.env
+sudo install -m 600 docker/.env.example /etc/pcap-analyzer.env
 ```
 
 Edit `/etc/pcap-analyzer.env`, and set `PCAP_ANALYZER_BEHIND_PROXY=0` when the app serves HTTPS itself. Put the password hash in single quotes. The unit expects `/etc/pcap-analyzer/cert.pem` and `key.pem`, so add them or change the unit. Then start it:
 
 ```bash
-sudo cp legacy-linux-server/pcap-analyzer.service /etc/systemd/system/
+sudo cp linux-glibc2.26-server/pcap-analyzer.service /etc/systemd/system/
 sudo systemctl enable --now pcap-analyzer
 ```
 

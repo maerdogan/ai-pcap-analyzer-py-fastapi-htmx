@@ -2,18 +2,20 @@
 # Build bundle/ on a Linux x86_64 machine with internet. Needs curl, tar and sha256sum, but not sudo.
 # The bundle holds Python, the Python packages, this application and tshark.
 set -euo pipefail
+trap 'echo "error: build-bundle.sh stopped at line $LINENO with status $?" >&2' ERR
 
 HERE=$(cd "$(dirname "$(readlink -f "$0")")" && pwd)
 ROOT=$(dirname "$HERE")
 PBS_TAG=20261026
 PYTHON=3.13.18
 DUCKDB=1.5.6 # Newer versions need glibc 2.27. Update MIN_GLIBC in run.sh when this changes.
-PART_SIZE=90m # GitHub refuses files over 100 MB
+ALPINE=v3.24 # Source of tshark
+PART_SIZE=45m # GitHub warns about files over 50 MB
 
 WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
 OUT=$WORK/out/runtime
-mkdir -p "$OUT/tshark/bin" "$OUT/tshark/lib" "$OUT/tshark/share" "$WORK/mamba" "$WORK/src"
+mkdir -p "$OUT/tshark/bin" "$OUT/tshark/lib" "$OUT/tshark/share" "$WORK/src"
 
 echo "Downloading Python $PYTHON..."
 file=cpython-$PYTHON+$PBS_TAG-x86_64-unknown-linux-gnu-install_only_stripped.tar.gz
@@ -28,24 +30,25 @@ cp -r "$ROOT/pyproject.toml" "$ROOT/README.md" "$ROOT/LICENSE" "$ROOT/src" "$WOR
 "$OUT/python/bin/python3" -m pip install -q --no-warn-script-location "duckdb==$DUCKDB" "$WORK/src"
 
 echo "Installing tshark..."
-curl -fsSL https://micro.mamba.pm/api/micromamba/linux-64/latest | tar xjf - -C "$WORK/mamba" bin/micromamba
-MAMBA_ROOT_PREFIX=$WORK/mamba/root "$WORK/mamba/bin/micromamba" create -y -q -p "$WORK/ts" \
-  -c conda-forge --override-channels wireshark
-
-# Keep tshark and the libraries it loads. glibc itself stays the host's.
-cp -L "$WORK/ts/bin/tshark" "$OUT/tshark/bin/"
-if ldd "$WORK/ts/bin/tshark" | grep 'not found'; then
-  echo "error: tshark has missing libraries" >&2
-  exit 1
-fi
-ldd "$WORK/ts/bin/tshark" | awk '$3 ~ /^\// {print $3}' | while read -r lib; do
-  case $(basename "$lib") in
-    libc.so* | libm.so* | libdl.so* | librt.so* | libpthread.so* | libresolv.so* | ld-linux*) ;;
-    *) cp -L "$lib" "$OUT/tshark/lib/" ;;
-  esac
+T=$WORK/alpine
+mkdir "$T"
+"$OUT/python/bin/python3" "$HERE/fetch-tshark.py" "$ALPINE" "$T"
+cp -a "$T/usr/bin/tshark" "$OUT/tshark/bin/tshark.real"
+find "$T" -maxdepth 3 -name '*.so*' -path '*/lib/*' \( -type f -o -type l \) -exec cp -a {} "$OUT/tshark/lib/" \;
+ln -sf ld-musl-x86_64.so.1 "$OUT/tshark/lib/libc.musl-x86_64.so.1"
+# Alpine links liblua into a subfolder, so these links break when copied. Replace them with the file.
+for link in "$OUT"/tshark/lib/*; do
+  [[ -e $link ]] || cp -L --remove-destination "$T/usr/lib/$(basename "$link")" "$link"
 done
-cp -r "$WORK/ts/share/wireshark" "$OUT/tshark/share/"
+cp -r "$T/usr/share/wireshark" "$OUT/tshark/share/"
 rm -rf "$OUT/tshark/share/wireshark/doc"
+# tshark runs through Alpine's musl loader, so it finds its libraries wherever the folder is.
+cat >"$OUT/tshark/bin/tshark" <<'EOF'
+#!/bin/sh
+dir=$(dirname "$(readlink -f "$0")")/..
+exec "$dir/lib/ld-musl-x86_64.so.1" --library-path "$dir/lib" "$dir/bin/tshark.real" "$@"
+EOF
+chmod +x "$OUT/tshark/bin/tshark"
 
 echo "Checking the runtime from another path..."
 mkdir "$WORK/moved"

@@ -22,7 +22,8 @@ All changes made on the same day are one minor version.
 - Command line: `analyze`, `report`, `connection`, `inspect`, `compare`, `list`, `delete`, `purge`, `serve` and `hash-password`.
 - Professional interface layout: side navigation, metrics band, sorted time breakdown and aligned slowest-request tables.
 - Synthetic sample generator with known timings, used by the tests.
-- Run without sudo, Docker or systemd from `legacy-linux-server`, with `run.sh` and a bundle builder for Python, its packages and tshark.
+- Run without sudo, Docker, systemd or internet from `linux-glibc2.26-server`, with Python, its packages and tshark included.
+- One folder for each environment: `kubernetes`, `docker` and `linux-glibc2.26-server`.
 - Security guidance in the README: what is not included, what operators must add, and a deployment diagram.
 
 ### Fixed
