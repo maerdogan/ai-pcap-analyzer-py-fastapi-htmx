@@ -1,5 +1,7 @@
 # Install
 
+Read the [security section](../README.md#security) first. HTTPS, network isolation, encrypted storage and resource limits are yours to add.
+
 All installs need an admin password. Create a hash and keep it out of shell history:
 
 ```bash
