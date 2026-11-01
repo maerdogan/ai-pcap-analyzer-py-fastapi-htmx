@@ -29,5 +29,6 @@ All changes made on the same day are one minor version.
 - Multi-line headers no longer break saving results.
 - Two identical analyses running together no longer collide.
 - Table icons no longer break under the content security policy.
+- The server now refuses to start with an invalid password hash, instead of starting with a login that can never succeed.
 - Sample generator: the TLS client now verifies the test certificate.
 - Sample generator: the high-latency scenario now acknowledges data at the real round-trip time.

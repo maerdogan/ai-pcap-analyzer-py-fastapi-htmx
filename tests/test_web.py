@@ -48,6 +48,12 @@ def test_needs_a_password(settings):
         create_app(settings)
 
 
+def test_invalid_hash_is_refused(settings):
+    settings.admin_password_hash = "PASTE_HASH_HERE"
+    with pytest.raises(ValueError, match="not a valid hash"):
+        create_app(settings)
+
+
 def test_pages_need_login(anon):
     assert anon.get("/").headers["location"] == "/login"
     assert anon.get("/api/a/0/urls").status_code == 401

@@ -26,10 +26,24 @@ def verify_password(password, stored):
         return False
 
 
+def valid_hash(stored):
+    parts = stored.split("$")
+    if len(parts) != 3 or parts[0] != "scrypt":
+        return False
+    try:
+        base64.b64decode(parts[1], validate=True)
+        base64.b64decode(parts[2], validate=True)
+    except ValueError:
+        return False
+    return True
+
+
 class Auth:
     def __init__(self, user, password=None, password_hash=None):
         if not password and not password_hash:
             raise ValueError("Set PCAP_ANALYZER_ADMIN_PASSWORD or PCAP_ANALYZER_ADMIN_PASSWORD_HASH before starting")
+        if password_hash and not valid_hash(password_hash):
+            raise ValueError("PCAP_ANALYZER_ADMIN_PASSWORD_HASH is not a valid hash. Create one with: pcap-analyzer hash-password")
         self.user = user
         self.hash = password_hash or hash_password(password)
         self.sessions = {}
