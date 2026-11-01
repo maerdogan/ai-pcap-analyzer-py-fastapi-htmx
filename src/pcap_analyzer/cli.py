@@ -1,5 +1,6 @@
 """Command line entry point."""
 import argparse
+import getpass
 import json
 import sys
 
@@ -55,6 +56,12 @@ def main(argv=None):
     ins.add_argument("--url")
     ins.add_argument("--min-size", type=int)
     ins.add_argument("--size-of", choices=list(reports.SIZE_SQL), default="total")
+    sv = sub.add_parser("serve", help="start the web interface")
+    sv.add_argument("--host", default="127.0.0.1")
+    sv.add_argument("--port", type=int, default=8000)
+    sv.add_argument("--cert", help="TLS certificate file")
+    sv.add_argument("--key", help="TLS private key file")
+    sub.add_parser("hash-password", help="create a value for PCAP_ANALYZER_ADMIN_PASSWORD_HASH")
     args = ap.parse_args(argv)
     settings = Settings()
     try:
@@ -72,6 +79,12 @@ def main(argv=None):
             return 0 if engine.delete(args.id, settings) else 1
         elif args.cmd == "purge":
             print(engine.purge(settings))
+        elif args.cmd == "serve":
+            from .web.server import run
+            run(settings, args.host, args.port, args.cert, args.key)
+        elif args.cmd == "hash-password":
+            from .web.auth import hash_password
+            print(hash_password(getpass.getpass("Password: ")))
         elif args.cmd in ("report", "connection", "inspect"):
             a = engine.open_analysis(args.id, settings)
             with a.connect() as db:

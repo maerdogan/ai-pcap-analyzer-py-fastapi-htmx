@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+{% import "_macros.html" as ui %}
+{% block title %}Inspect traffic{% endblock %}
+{% block crumb %}{{ ui.crumb(a) }}{% endblock %}
+{% block main %}
+<nav class="tabs" aria-label="Views">
+  {% for key, label in tabs.items() %}<a href="/a/{{ a.id }}?tab={{ key }}">{{ label }}</a>{% endfor %}
+  <a href="/a/{{ a.id }}/inspect" aria-current="page">Inspect traffic</a>
+</nav>
+<h1>Inspect traffic</h1>
+<form id="f" hx-get="/a/{{ a.id }}/inspect" hx-target="#results" hx-push-url="true" hx-trigger="submit">
+  <div class="fields">
+    <label>Source IP <input name="src" list="srcs" value="{{ q.src or '' }}" placeholder="100.10.10.101"></label>
+    <label>Destination IP <input name="dst" list="dsts" value="{{ q.dst or '' }}" placeholder="100.10.100.101"></label>
+    <label>Destination port <input name="port" inputmode="numeric" value="{{ q.port or '' }}" placeholder="8080"></label>
+    <label>Connection type
+      <select name="kind"><option value="">All</option>{% for k in kinds %}<option {% if q.kind == k %}selected{% endif %}>{{ k }}</option>{% endfor %}</select>
+    </label>
+    <label>URL contains <input name="url" value="{{ q.url or '' }}" placeholder="/api/orders"></label>
+    <label>Larger than (bytes) <input name="min_size" inputmode="numeric" value="{{ q.min_size or '' }}"></label>
+    <label>Size of
+      <select name="size_of">{% for k, l in [("total", "Request and response"), ("request", "Request"), ("response", "Response"), ("packet", "Largest packet")] %}<option value="{{ k }}" {% if q.size_of == k %}selected{% endif %}>{{ l }}</option>{% endfor %}</select>
+    </label>
+  </div>
+  <datalist id="srcs">{% for s in pairs | map(attribute="client_ip") | unique %}<option>{{ s }}</option>{% endfor %}</datalist>
+  <datalist id="dsts">{% for s in pairs | map(attribute="server_ip") | unique %}<option>{{ s }}</option>{% endfor %}</datalist>
+  <button class="primary">Inspect</button>
+</form>
+{% if filters %}
+<section class="saved">
+  <h2>Saved filters</h2>
+  <ul>
+    {% for f in filters %}
+    <li>
+      <a href="/a/{{ a.id }}/inspect?{% for k in ('src','dst','port','kind','url','min_size','size_of') %}{% if f[k] %}{{ k }}={{ f[k] | urlencode }}&amp;{% endif %}{% endfor %}">{{ f.name }}</a>
+      <form method="post" action="/filters/{{ f.id }}/delete"><input type="hidden" name="back" value="/a/{{ a.id }}/inspect"><button class="link danger" aria-label="Delete filter {{ f.name }}">Delete</button></form>
+    </li>
+    {% endfor %}
+  </ul>
+</section>
+{% endif %}
+<details class="save">
+  <summary>Save this filter</summary>
+  <form method="post" action="/filters" class="inline">
+    <input type="hidden" name="back" value="/a/{{ a.id }}/inspect">
+    {% for k in ('src','dst','port','kind','url','min_size','size_of') %}<input type="hidden" name="{{ k }}" value="{{ q[k] or '' }}">{% endfor %}
+    <label>Name <input name="name" required maxlength="80"></label>
+    <button>Save filter</button>
+  </form>
+  <p class="hint">Saves the filter as it was last applied.</p>
+</details>
+<div id="results">{% include "_inspect_results.html" %}</div>
+{% endblock %}

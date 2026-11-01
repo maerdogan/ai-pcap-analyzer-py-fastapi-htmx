@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% import "_macros.html" as ui %}
+{% block title %}{{ m.filename }}{% endblock %}
+{% block crumb %}{{ ui.crumb(a) }}{% endblock %}
+{% block main %}
+<nav class="tabs" aria-label="Views">
+  {% for key, label in tabs.items() %}
+  <a href="/a/{{ a.id }}?tab={{ key }}" hx-get="/a/{{ a.id }}?tab={{ key }}" hx-target="#tab" hx-push-url="true" {% if key == tab %}aria-current="page"{% endif %}>{{ label }}</a>
+  {% endfor %}
+  <a href="/a/{{ a.id }}/inspect">Inspect traffic</a>
+</nav>
+<div id="tab">{% include "_tab_" ~ tab ~ ".html" %}</div>
+{% endblock %}

@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% block title %}Your captures{% endblock %}
+{% block main %}
+<section class="upload">
+  <h1>Analyze a capture</h1>
+  <form hx-post="/upload" hx-encoding="multipart/form-data" hx-target="#job" hx-swap="innerHTML">
+    <label class="drop">Capture file, up to {{ max_mb }} MB
+      <input type="file" name="capture" required>
+    </label>
+    <details>
+      <summary>Decrypt HTTPS</summary>
+      <div class="fields">
+        <label>TLS key log file <input type="file" name="keylog"></label>
+        <label>RSA private key <input type="file" name="rsa_key"></label>
+      </div>
+      <p class="hint">A key log works for all modern TLS. An RSA key only reads old RSA key exchange. Keys are removed after the analysis.</p>
+    </details>
+    <details>
+      <summary>Analyze only part of the capture</summary>
+      <div class="fields">
+        <label>Host <input name="host_a" placeholder="10.0.0.5 or 10.0.0.0/24"></label>
+        <label>Second host <input name="host_b"></label>
+        <label>TCP port <input name="port" inputmode="numeric"></label>
+        <label>From <input name="start" type="datetime-local" step="1"></label>
+        <label>Until <input name="end" type="datetime-local" step="1"></label>
+        <label class="wide">Wireshark display filter <input name="display_filter" spellcheck="false" placeholder="http.host contains &quot;example&quot;"></label>
+      </div>
+    </details>
+    <button class="primary">Analyze capture</button>
+  </form>
+  <div id="job" aria-live="polite"></div>
+</section>
+<section>
+  <h2>Your captures</h2>
+  {% if analyses %}
+  <p class="hint">Kept for {{ ttl }} days. Everyone with the login sees this list.</p>
+  <div class="scroll"><table>
+    <thead><tr><th>File</th><th>Analyzed</th><th class="num">Size</th><th class="num">Connections</th><th class="num">Requests</th><th></th></tr></thead>
+    <tbody>
+    {% for m in analyses %}
+      <tr>
+        <td><a href="/a/{{ m.id }}">{{ m.filename }}</a>{% if m.filter %}<br><span class="hint">{{ m.filter }}</span>{% endif %}</td>
+        <td>{{ m.created | when }}</td><td class="num">{{ m.size | size }}</td><td class="num">{{ m.connections }}</td><td class="num">{{ m.transactions }}</td>
+        <td><form method="post" action="/a/{{ m.id }}/delete"><button class="link danger" aria-label="Delete {{ m.filename }}">Delete</button></form></td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table></div>
+  {% else %}<p>Nothing here yet. Upload a capture above to see where its time went.</p>{% endif %}
+</section>
+{% endblock %}

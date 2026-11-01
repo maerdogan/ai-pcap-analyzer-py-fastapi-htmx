@@ -1,0 +1,42 @@
+{% macro strip(phases) %}
+{% set total = phases | sum(attribute="seconds") %}
+<div class="strip" role="img" aria-label="{% for p in phases %}{{ p.label }} {{ p.seconds | seconds }}{% if not loop.last %}, {% endif %}{% endfor %}">
+  {% for p in phases %}<span class="ph-{{ p.name }}" style="width:{{ (p.seconds / total * 100) | round(2) if total else 0 }}%" title="{{ p.label }}: {{ p.seconds | seconds }}"></span>{% endfor %}
+</div>
+{% endmacro %}
+
+{% macro legend(phases) %}
+<ul class="legend">
+  {% for p in phases %}<li><i class="ph-{{ p.name }}"></i>{{ p.label }} <b>{{ p.seconds | seconds }}</b></li>{% endfor %}
+</ul>
+{% endmacro %}
+
+{% macro waterfall(rows, a) %}
+{% set longest = rows | map(attribute="longest") | max if rows else 0 %}
+<ol class="waterfall">
+  {% for t in rows %}
+  <li>
+    <a href="/a/{{ a.id }}/txn/{{ t.id }}" class="req">
+      <span class="what"><b>{{ t.status or "No reply" }}</b> {{ t.method }} {{ t.uri | truncate(70, True, "…") }}</span>
+      <span class="took">{{ t.total | seconds }}</span>
+    </a>
+    <div class="bar" style="width:{{ ((t.longest / longest * 100) if longest else 0) | round(1) }}%">{{ strip(t.phases) }}</div>
+    <p class="why"><b>{{ t.cause_label }}.</b> {{ t.explanation }}</p>
+  </li>
+  {% endfor %}
+</ol>
+{% endmacro %}
+
+{% macro stats(s) %}
+<dl class="stats">
+  <div><dt>Requests</dt><dd>{{ s.requests or 0 }}</dd></div>
+  <div><dt>Successful</dt><dd>{{ s.ok or 0 }}</dd></div>
+  <div><dt>Failed</dt><dd>{{ s.failed or 0 }}</dd></div>
+  <div><dt>Average</dt><dd>{{ s.avg_total | seconds }}</dd></div>
+  <div><dt>Median</dt><dd>{{ s.p50_total | seconds }}</dd></div>
+  <div><dt>95th percentile</dt><dd>{{ s.p95_total | seconds }}</dd></div>
+  <div><dt>Slowest</dt><dd>{{ s.max_total | seconds }}</dd></div>
+</dl>
+{% endmacro %}
+
+{% macro crumb(a) %}<a class="crumb" href="/a/{{ a.id }}">{{ a.meta.filename }}</a>{% endmacro %}

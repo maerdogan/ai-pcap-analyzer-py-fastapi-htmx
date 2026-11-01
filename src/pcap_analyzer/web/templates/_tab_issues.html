@@ -1,0 +1,16 @@
+<section>
+  <h1>Issues</h1>
+  {% if issues %}
+  <ul class="issues">
+    {% for i in issues %}
+    <li class="sev-{{ i.severity }}">
+      <span class="n">{{ i.count }}</span>
+      <div>
+        {% if i.drill %}<a href="/a/{{ a.id }}/issue/{{ i.key }}">{{ i.title }}</a>{% else %}<b>{{ i.title }}</b>{% endif %}
+        <p>{{ i.why }}</p>
+      </div>
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}<p>No problems stand out in this capture.</p>{% endif %}
+</section>

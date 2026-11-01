@@ -1,0 +1,40 @@
+{% import "_macros.html" as ui %}
+{% for w in m.warnings %}<p class="warn">{{ warning_text[w] }}</p>{% endfor %}
+<section>
+  <h1>Where the time went</h1>
+  {% if budget %}
+  <p class="lead">{{ o.http.requests }} requests over {{ o.tcp.connections }} connections.
+    {% if m.capture_end and m.capture_start %}Captured {{ m.capture_start | when }}, spanning {{ (m.capture_end - m.capture_start) | seconds }}.{% endif %}</p>
+  <div class="budget">{{ ui.strip(budget) }}</div>
+  {{ ui.legend(budget) }}
+  {% else %}
+  <p class="lead">No HTTP requests were found, so only TCP data is available. If the traffic is HTTPS, analyze it again with a key log.</p>
+  {% endif %}
+</section>
+{% if o.http.requests %}
+<section>
+  <h2>HTTP timing</h2>
+  {{ ui.stats(o.http) }}
+</section>
+<section>
+  <h2>Slowest requests</h2>
+  {{ ui.waterfall(slow, a) }}
+</section>
+<section class="charts">
+  <div><h2>Response time spread</h2><div class="chart" data-chart="histogram" data-src="/api/a/{{ a.id }}/histogram" data-name="response-times"></div></div>
+  <div><h2>Status codes</h2><div class="chart" data-chart="statuses" data-src="/api/a/{{ a.id }}/statuses" data-name="status-codes"></div></div>
+</section>
+{% endif %}
+<section>
+  <h2>TCP</h2>
+  <dl class="stats">
+    <div><dt>Connections</dt><dd>{{ o.tcp.connections }}</dd></div>
+    <div><dt>Handshakes seen</dt><dd>{{ o.tcp.handshakes }}</dd></div>
+    <div><dt>Resets</dt><dd>{{ o.tcp.resets }}</dd></div>
+    <div><dt>Retransmissions</dt><dd>{{ o.tcp.retransmissions or 0 }}</dd></div>
+    <div><dt>Average connect</dt><dd>{{ o.tcp.avg_connect | seconds }}</dd></div>
+    <div><dt>Average round trip</dt><dd>{{ o.tcp.avg_rtt_server | seconds }}</dd></div>
+  </dl>
+  <p class="hint">Traffic types: {% for k in o.kinds %}{{ k.kind }} ({{ k.connections }}){% if not loop.last %}, {% endif %}{% endfor %}.
+    {% for c in o.capture_points if c.capture_point == "near_server" or c.capture_point == "near_client" or c.capture_point == "middle" %}{% if loop.first %}Capture point: {% endif %}{{ c.capture_point | replace("_", " ") }} ({{ c.connections }}){% if not loop.last %}, {% endif %}{% endfor %}</p>
+</section>

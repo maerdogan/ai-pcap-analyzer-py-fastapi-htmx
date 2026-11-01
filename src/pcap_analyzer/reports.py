@@ -150,6 +150,7 @@ def _groups(db, tw, tp):
 
 
 def slowest(db, tw="", tp=(), limit=SLOWEST):
+    """Slowest requests with their explanation. Unanswered requests count by how long they waited."""
     where = f" WHERE {tw}" if tw else ""
     got = rows(db, f"""SELECT t.* FROM http_transactions t JOIN tcp_connections c USING (stream){where}
         ORDER BY coalesce(t.total, c.end_time - t.req_end) DESC NULLS LAST LIMIT ?""", list(tp) + [limit])
@@ -164,6 +165,9 @@ def describe(db, t):
     t["cause_label"] = causes.LABELS[t["cause"]]
     t["explanation"] = causes.explain(t, conn)
     t["conn"] = conn
+    t["longest"] = t["total"] if t["total"] is not None else max(conn["end_time"] - t["req_end"], 0)
+    if not t["answered"]:
+        t["phases"] = [dict(name="service", label="Waiting for a response", seconds=t["longest"])]
     return t
 
 
@@ -183,40 +187,61 @@ def histogram(db):
     return got
 
 
+# key, title, why, severity, condition on requests (t), condition on connections (c)
+ISSUES = [
+    ("no_response", "Requests without a response", "The service hung, crashed, or a device dropped the reply.", 1, "NOT t.answered", None),
+    ("resets", "Connections reset", "An RST ended the connection, often a timeout or a crash on one side.", 1, None, "c.close_type = 'RST'"),
+    ("no_handshake", "Handshakes not completed", "SYN got no full answer: a firewall, a closed port or an unreachable host.", 1, None,
+     "NOT c.handshake_seen AND c.transactions = 0 AND c.packets <= 3"),
+    ("truncated", "Incomplete responses", "Fewer body bytes arrived than Content-Length promised.", 1, "t.truncated", None),
+    ("gateway", "Gateway errors", "HTTP 502, 503 or 504: a proxy got no good answer from the service behind it.", 1, "t.status IN (502, 503, 504)", None),
+    ("server_errors", "Server errors", "Other HTTP 5xx answers.", 1, "t.status >= 500 AND t.status NOT IN (502, 503, 504)", None),
+    ("slow_service", "Slow service", "The server took most of the time.", 2, "t.cause = 'service'", None),
+    ("loss", "Packet loss", "Retransmissions cost noticeable time.", 2, "t.cause = 'loss'", None),
+    ("retrans", "Connections with retransmissions", "Packets were lost or delayed on the path.", 2, None, "c.retransmissions > 0"),
+    ("slow_client", "Slow receivers", "The receiver closed its TCP window.", 2, "t.zero_window_time > 0", None),
+    ("delayed_ack", "Delayed ACK waits", "Senders stalled for a late ACK, a classic Nagle and delayed ACK pattern.", 3, "t.delayed_ack_time > 0", None),
+    ("queueing", "Requests queued on a connection", "A request waited for an earlier response on the same connection.", 3, "t.queue_time > 0", None),
+    ("network", "Network delay", "Round-trip time was the largest part.", 3, "t.cause = 'network'", None),
+    ("small_mss", "Small MSS", "Small segments mean more packets and round trips, often from a tunnel or a low MTU.", 3, None, "c.mss < 1200"),
+]
+ISSUE_LIMIT = 200
+
+
 def issues(db, meta):
     """Curated problems, most serious first. Each says what to look at next."""
-    q = lambda sql: db.execute(sql).fetchone()[0]
     found = []
-
-    def add(key, title, why, n, severity):
+    for key, title, why, severity, tsql, csql in ISSUES:
+        table, cond = ("http_transactions t", tsql) if tsql else ("tcp_connections c", csql)
+        n = db.execute(f"SELECT count(*) FROM {table} WHERE {cond}").fetchone()[0]
         if n:
-            found.append(dict(key=key, title=title, why=why, count=n, severity=severity))
-
-    add("no_response", "Requests without a response", "The service hung, crashed or a device dropped the reply.",
-        q("SELECT count(*) FROM http_transactions WHERE NOT answered"), 1)
-    add("resets", "Connections reset", "An RST ended the connection, often a timeout or a crash on one side.",
-        q("SELECT count(*) FROM tcp_connections WHERE close_type = 'RST'"), 1)
-    add("no_handshake", "Handshakes not completed", "SYN got no full answer: a firewall, a closed port or an unreachable host.",
-        q("SELECT count(*) FROM tcp_connections WHERE NOT handshake_seen AND transactions = 0 AND first_frame IS NOT NULL AND packets <= 3"), 1)
-    add("truncated", "Incomplete responses", "Fewer body bytes arrived than Content-Length promised.",
-        q("SELECT count(*) FROM http_transactions WHERE truncated"), 1)
-    add("gateway", "Gateway errors", "HTTP 502, 503 or 504: a proxy could not get an answer from the service behind it.",
-        q("SELECT count(*) FROM http_transactions WHERE status IN (502, 503, 504)"), 1)
-    add("server_errors", "Server errors", "Other HTTP 5xx answers.",
-        q("SELECT count(*) FROM http_transactions WHERE status >= 500 AND status NOT IN (502, 503, 504)"), 1)
-    add("slow_service", "Slow service", "The server took most of the time.", q("SELECT count(*) FROM http_transactions WHERE cause = 'service'"), 2)
-    add("loss", "Packet loss", "Retransmissions cost noticeable time.", q("SELECT count(*) FROM http_transactions WHERE cause = 'loss'"), 2)
-    add("retrans", "Connections with retransmissions", "Packets were lost or delayed on the path.",
-        q("SELECT count(*) FROM tcp_connections WHERE retransmissions > 0"), 2)
-    add("slow_client", "Slow receivers", "The receiver closed its TCP window.", q("SELECT count(*) FROM http_transactions WHERE zero_window_time > 0"), 2)
-    add("delayed_ack", "Delayed ACK waits", "Senders stalled for a late ACK, a classic Nagle and delayed ACK pattern.",
-        q("SELECT count(*) FROM http_transactions WHERE delayed_ack_time > 0"), 3)
-    add("queueing", "Requests queued on a connection", "A request waited for an earlier response on the same connection.",
-        q("SELECT count(*) FROM http_transactions WHERE queue_time > 0"), 3)
-    add("network", "Network delay", "Round-trip time was the largest part.", q("SELECT count(*) FROM http_transactions WHERE cause = 'network'"), 3)
-    add("slow_dns", "Slow DNS answers", "Lookups took over 100 ms before the connection started.", q("SELECT count(*) FROM dns_queries WHERE duration > 0.1"), 3)
-    add("small_mss", "Small MSS", "Small segments mean more packets and round trips, often from a tunnel or a low MTU.",
-        q("SELECT count(*) FROM tcp_connections WHERE mss < 1200"), 3)
-    add("frag_needed", "Fragmentation needed", "ICMP says packets were too big for the path.", meta.get("frag_needed", 0), 2)
-    add("ip_fragments", "IP fragments", "Fragmented packets raise the cost of any loss.", meta.get("ip_fragments", 0), 3)
+            found.append(dict(key=key, title=title, why=why, count=n, severity=severity, drill=True))
+    dns = db.execute("SELECT count(*) FROM dns_queries WHERE duration > 0.1").fetchone()[0]
+    for key, title, why, severity, n in (
+            ("slow_dns", "Slow DNS answers", "Lookups took over 100 ms.", 3, dns),
+            ("frag_needed", "Fragmentation needed", "ICMP says packets were too big for the path.", 2, meta.get("frag_needed", 0)),
+            ("ip_fragments", "IP fragments", "Fragmented packets raise the cost of any loss.", 3, meta.get("ip_fragments", 0))):
+        if n:
+            found.append(dict(key=key, title=title, why=why, count=n, severity=severity, drill=False))
     return sorted(found, key=lambda x: (x["severity"], -x["count"]))
+
+
+def issue_detail(db, key):
+    """Requests and connections behind one issue."""
+    row = next((i for i in ISSUES if i[0] == key), None)
+    if row is None:
+        return None
+    _, title, why, _, tsql, csql = row
+    if tsql:
+        txns = slowest(db, tsql, [], ISSUE_LIMIT)
+        conns = []
+    else:
+        conns = rows(db, f"SELECT * FROM tcp_connections c WHERE {csql} ORDER BY c.stream LIMIT ?", [ISSUE_LIMIT])
+        txns = slowest(db, csql, [], ISSUE_LIMIT)
+    return dict(key=key, title=title, why=why, transactions=txns, connections=conns)
+
+
+def time_budget(db):
+    """Total seconds spent in each phase, across all requests."""
+    t = one(db, f"""SELECT {', '.join(f'sum({p}) AS {p}' for p in causes.PHASES)} FROM http_transactions""")
+    return [dict(name=k, label=causes.PHASE_LABELS[k], seconds=v) for k, v in t.items() if v]

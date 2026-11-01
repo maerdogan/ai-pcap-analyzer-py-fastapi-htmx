@@ -1,0 +1,7 @@
+{% if job.state == "failed" %}
+<p class="error" role="alert">{{ job.filename }} could not be analyzed: {{ job.error }}</p>
+{% else %}
+<p class="working" hx-get="/jobs/{{ job.id }}" hx-trigger="load delay:700ms" hx-swap="outerHTML">
+  {{ "Waiting for a free slot" if job.state == "waiting" else "Analyzing" }} {{ job.filename }}
+</p>
+{% endif %}

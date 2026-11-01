@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% import "_macros.html" as ui %}
+{% block title %}Connection {{ d.conn.stream }}{% endblock %}
+{% block crumb %}{{ ui.crumb(a) }}{% endblock %}
+{% block main %}
+{% set c = d.conn %}
+<p><a href="/a/{{ a.id }}?tab=connections">All connections</a></p>
+<h1>{{ c.client_ip }}:{{ c.client_port }} to {{ c.server_ip }}:{{ c.server_port }}</h1>
+<p class="lead">{{ c.kind }}, {{ d.total }} requests, open for {{ c.duration | seconds }}.
+  {% if c.close_type %}Closed by the {{ c.closed_by }} with {{ c.close_type }}.{% else %}Still open when the capture ended.{% endif %}</p>
+<section>
+  <h2>TCP details</h2>
+  <dl class="stats">
+    <div><dt>Connect time</dt><dd>{{ c.connect_time | seconds }}</dd></div>
+    <div><dt>Round trip to server</dt><dd>{{ c.rtt_server | seconds }}</dd></div>
+    <div><dt>Round trip to client</dt><dd>{{ c.rtt_client | seconds }}</dd></div>
+    <div><dt>Capture point</dt><dd>{{ c.capture_point | replace("_", " ") }}</dd></div>
+    <div><dt>MSS</dt><dd>{{ c.mss or "–" }}</dd></div>
+    <div><dt>SACK</dt><dd>{{ "Yes" if c.sack else "No" }}</dd></div>
+    <div><dt>Window scale</dt><dd>{{ c.wscale if c.wscale is not none else "–" }}</dd></div>
+    <div><dt>Smallest window</dt><dd>{{ c.min_window if c.min_window is not none else "–" }}</dd></div>
+    <div><dt>Retransmissions</dt><dd>{{ c.retransmissions }}</dd></div>
+    <div><dt>Zero windows</dt><dd>{{ c.zero_windows }}</dd></div>
+    <div><dt>Client sent</dt><dd>{{ c.payload_client | size }}</dd></div>
+    <div><dt>Server sent</dt><dd>{{ c.payload_server | size }}</dd></div>
+    <div><dt>Byte ratio</dt><dd>{{ c.byte_ratio_db }} dB</dd></div>
+    {% if c.tls_version %}<div><dt>TLS</dt><dd>{{ c.tls_version }}</dd></div>{% endif %}
+    {% if c.sni %}<div><dt>Server name</dt><dd>{{ c.sni }}</dd></div>{% endif %}
+  </dl>
+</section>
+{% if d.top %}
+<section>
+  <div class="head-row">
+    <h2>Slowest requests</h2>
+    <p class="switch">
+      <a href="?percent=false" {% if not percent %}aria-current="true"{% endif %}>First 5</a>
+      <a href="?percent=true" {% if percent %}aria-current="true"{% endif %}>Top 10%</a>
+    </p>
+  </div>
+  {{ ui.waterfall(d.top, a) }}
+</section>
+{% endif %}
+{% endblock %}

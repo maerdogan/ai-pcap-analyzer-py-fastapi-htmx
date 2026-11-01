@@ -105,4 +105,18 @@ def test_transaction_detail(a):
         t = reports.transaction(db, tid)
     assert "Host: app.example.test" in t["req_headers"] and '{"id":123}' in t["resp_body"]
     assert t["conn"]["stream"] == 0 and any(p["name"] == "connect_time" for p in t["phases"])
-    assert reports.transaction  # silence linters when run alone
+
+
+def test_issue_detail(a):
+    with a.connect() as db:
+        d = reports.issue_detail(db, "gateway")
+        assert [t["status"] for t in d["transactions"]][0] == 504
+        r = reports.issue_detail(db, "resets")
+        assert len(r["connections"]) == 2 and len(r["transactions"]) == 2
+        assert reports.issue_detail(db, "nope") is None
+
+
+def test_time_budget(a):
+    with a.connect() as db:
+        names = {b["name"]: b["seconds"] for b in reports.time_budget(db)}
+    assert names["retrans_time"] == pytest.approx(0.8, abs=0.01) and names["service"] > 60

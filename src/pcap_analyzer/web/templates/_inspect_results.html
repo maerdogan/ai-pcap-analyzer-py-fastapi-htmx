@@ -1,0 +1,30 @@
+{% import "_macros.html" as ui %}
+{% if r.connections.connections == 0 %}
+<p class="lead">Nothing in this capture matches. Check the addresses, or clear a filter.</p>
+{% else %}
+<section>
+  <h2>Summary</h2>
+  {{ ui.stats(r.requests) }}
+  <dl class="stats">
+    <div><dt>TCP connections</dt><dd>{{ r.connections.connections }}</dd></div>
+    <div><dt>Successful</dt><dd>{{ r.connections.ok }}</dd></div>
+    <div><dt>Carrying HTTP</dt><dd>{{ r.connections.http }}</dd></div>
+    <div><dt>TCP only</dt><dd>{{ r.connections.tcp_only }}</dd></div>
+    <div><dt>Average connect</dt><dd>{{ r.connections.avg_connect | seconds }}</dd></div>
+    <div><dt>Average round trip</dt><dd>{{ r.connections.avg_rtt | seconds }}</dd></div>
+  </dl>
+</section>
+{% if r.urls %}
+<section>
+  <h2>By URL</h2>
+  <div class="scroll"><table>
+    <thead><tr><th>Method</th><th>URL</th><th class="num">Requests</th><th class="num">Failed</th><th class="num">Average</th><th class="num">95th percentile</th><th class="num">Slowest</th><th>Status</th></tr></thead>
+    <tbody>{% for u in r.urls %}
+      <tr><td>{{ u.method }}</td><td>{{ u.url }}</td><td class="num">{{ u.requests }}</td><td class="num">{{ u.failed }}</td><td class="num">{{ u.avg_total | seconds }}</td><td class="num">{{ u.p95_total | seconds }}</td><td class="num">{{ u.max_total | seconds }}</td>
+      <td>{% for s in u.statuses %}{{ s.status or "none" }} ×{{ s.requests }}{% if not loop.last %}, {% endif %}{% endfor %}</td></tr>
+    {% endfor %}</tbody>
+  </table></div>
+</section>
+{% endif %}
+{% if r.slowest %}<section><h2>Slowest {{ r.slowest | length }} requests</h2>{{ ui.waterfall(r.slowest, a) }}</section>{% endif %}
+{% endif %}

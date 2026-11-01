@@ -3,6 +3,7 @@ import hashlib
 import json
 import re
 import shutil
+import tempfile
 import time
 from dataclasses import astuple, dataclass
 from pathlib import Path
@@ -84,7 +85,7 @@ def _attach_packet_size(b, txns):
         x["max_packet"] = max((p.size for p in s.packets if x["req_frame"] <= p.frame <= hi), default=0)
 
 
-def analyze(path, keylog=None, rsa_key=None, flt=None, settings=None, use_cached=True):
+def analyze(path, keylog=None, rsa_key=None, flt=None, settings=None, use_cached=True, display_name=None):
     settings = settings or Settings()
     flt = flt or tshark.Filter()
     path = Path(path)
@@ -111,20 +112,21 @@ def analyze(path, keylog=None, rsa_key=None, flt=None, settings=None, use_cached
     _attach_dns(txns, b.dns_rows)
     _attach_packet_size(b, txns)
 
-    tmp = settings.workdir / f".{aid}.tmp"
-    shutil.rmtree(tmp, ignore_errors=True)
-    tmp.mkdir(parents=True)
-    tmp.chmod(0o700)
+    settings.workdir.mkdir(parents=True, exist_ok=True)
+    tmp = Path(tempfile.mkdtemp(prefix=".tmp-", dir=settings.workdir))
     store.write(tmp / "analysis.duckdb", conns, txns, b.events, b.dns_rows)
     meta = dict(
-        id=aid, filename=path.name, size=path.stat().st_size, created=time.time(), tshark=ts_version, version=__version__,
+        id=aid, filename=display_name or path.name, size=path.stat().st_size, created=time.time(), tshark=ts_version, version=__version__,
         decryption="keylog" if keylog else "rsa_key" if rsa_key else None, filter=flt.expression(),
         packets=b.total, tcp_packets=b.tcp, bytes=b.bytes, connections=len(conns), transactions=len(txns),
         ip_fragments=b.fragments, frag_needed=b.frag_needed, capture_start=b.t_first, capture_end=b.t_last, duration_s=round(time.monotonic() - started, 3),
         warnings=_warnings(b, conns, bool(keylog or rsa_key), warnings))
     (tmp / "meta.json").write_text(json.dumps(meta, indent=2))
     shutil.rmtree(out, ignore_errors=True)
-    tmp.rename(out)
+    try:
+        tmp.rename(out)
+    except OSError:  # an identical analysis finished first
+        shutil.rmtree(tmp, ignore_errors=True)
     return Analysis(aid, out, meta, False)
 
 
