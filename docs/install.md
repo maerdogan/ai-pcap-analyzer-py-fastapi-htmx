@@ -31,15 +31,15 @@ Compose publishes port 8000 on localhost only. Put an HTTPS proxy in front of it
 
 ## Kubernetes
 
-Push the image to your internal registry, then set the image and host names in `deploy/kubernetes/`.
+Push the image to your internal registry, then set the image and host names in `kubernetes/generic/`.
 
 ```bash
 kubectl create namespace pcap-analyzer
 kubectl -n pcap-analyzer create secret generic pcap-analyzer-admin --from-literal=password-hash='PASTE_HASH_HERE'
-kubectl apply -k deploy/kubernetes
+kubectl apply -k kubernetes/generic
 ```
 
-Keep one replica: sessions and running jobs live in memory. The Ingress annotations assume ingress-nginx. Other controllers need their own upload limit of at least 110 MB. `deploy/vks` is an example overlay for F5 NGINX Ingress Controller, which uses `nginx.org` annotations.
+Keep one replica: sessions and running jobs live in memory. The Ingress annotations assume ingress-nginx. Other controllers need their own upload limit of at least 110 MB. `kubernetes/vks` is an example overlay for F5 NGINX Ingress Controller, which uses `nginx.org` annotations.
 
 To use it without an Ingress:
 
@@ -47,7 +47,11 @@ To use it without an Ingress:
 kubectl -n pcap-analyzer port-forward deploy/pcap-analyzer 8000:8000
 ```
 
-## Linux server without containers
+## Linux server without sudo
+
+[legacy-linux-server](../legacy-linux-server/README.md) runs the app as a normal user from one folder, with Python, its packages and tshark included. It needs no Docker, systemd or internet.
+
+## Linux server with systemd
 
 Needs Python 3.11+ and tshark 4.0+. Build a package set on a machine with internet and the same OS:
 
@@ -63,11 +67,16 @@ python3 -m venv /opt/pcap-analyzer
 sudo useradd --system pcap-analyzer
 sudo install -d -o pcap-analyzer -m 700 /var/lib/pcap-analyzer
 sudo install -m 600 .env.example /etc/pcap-analyzer.env
-sudo cp deploy/pcap-analyzer.service /etc/systemd/system/
+```
+
+Edit `/etc/pcap-analyzer.env`, and set `PCAP_ANALYZER_BEHIND_PROXY=0` when the app serves HTTPS itself. Put the password hash in single quotes. The unit expects `/etc/pcap-analyzer/cert.pem` and `key.pem`, so add them or change the unit. Then start it:
+
+```bash
+sudo cp legacy-linux-server/pcap-analyzer.service /etc/systemd/system/
 sudo systemctl enable --now pcap-analyzer
 ```
 
-Edit `/etc/pcap-analyzer.env` first, and set `PCAP_ANALYZER_BEHIND_PROXY=0` when the app serves HTTPS itself. On Ubuntu, AppArmor lets tshark read only `/tmp`, so the app copies captures there during analysis. It removes them afterward.
+On Ubuntu, AppArmor lets tshark read only `/tmp`, so the app copies captures there during analysis. It removes them afterward.
 
 ## Settings
 

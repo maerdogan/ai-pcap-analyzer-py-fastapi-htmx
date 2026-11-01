@@ -37,7 +37,7 @@ pcap-analyzer analyze capture.pcap --keylog keys.log --host 10.0.0.5 --port 8080
 pcap-analyzer inspect ANALYSIS_ID --src 10.0.0.5 --dst 10.0.0.9 --port 8080
 ```
 
-See [docs/install.md](docs/install.md) for Docker, Kubernetes, offline installs and settings.
+See [docs/install.md](docs/install.md) for Docker, Kubernetes, offline installs and settings. To run without Docker or sudo, see [legacy-linux-server](legacy-linux-server/README.md).
 
 ## Development
 
@@ -107,7 +107,7 @@ flowchart TD
 - Treat a TLS key log like a password, because it decrypts every session it covers. Delete it after use. The app removes its copy after analysis. If a process is killed, the hourly cleanup removes the copy within 7 hours.
 - Decompress captures first. Compressed files are refused, because their real size cannot be checked.
 - Never commit captures or keys, and never attach them to public issues.
-- `deploy/vks` is an example from one private lab. Do not reuse its addresses, and replace its self-signed certificate.
+- `kubernetes/vks` is an example from one private lab. Do not reuse its addresses, and replace its self-signed certificate.
 
 ## License
 

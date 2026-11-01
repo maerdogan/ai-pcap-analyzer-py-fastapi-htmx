@@ -27,3 +27,9 @@ pcap-analyzer.conf
 
 # Local settings
 .env
+
+# Created by legacy-linux-server/run.sh
+legacy-linux-server/runtime/
+legacy-linux-server/data/
+legacy-linux-server/*.log
+legacy-linux-server/*.pid
