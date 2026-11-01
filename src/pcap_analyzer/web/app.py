@@ -143,7 +143,7 @@ def create_app(settings=None, secure_cookie=False):
             return RedirectResponse("/login", 303)
         response = await call_next(request)
         response.headers.update({"Content-Security-Policy": CSP, "X-Content-Type-Options": "nosniff",
-                                 "Referrer-Policy": "no-referrer", "Cache-Control": "no-store" if not path.startswith("/static/") else "max-age=3600"})
+                                 "Referrer-Policy": "no-referrer", "Cache-Control": "no-store" if not path.startswith("/static/") else "no-cache"})
         return response
 
     @app.exception_handler(HTTPException)

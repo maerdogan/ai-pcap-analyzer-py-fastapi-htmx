@@ -7,11 +7,11 @@
   <title>{% block title %}pcap-analyzer{% endblock %}</title>
   <link rel="stylesheet" href="/static/vendor/ag-grid.min.css">
   <link rel="stylesheet" href="/static/vendor/ag-theme-quartz.min.css">
-  <link rel="stylesheet" href="/static/app.css">
+  <link rel="stylesheet" href="/static/app.css?v={{ version }}">
   <script src="/static/vendor/htmx.min.js" defer></script>
   <script src="/static/vendor/ag-grid.min.js" defer></script>
   <script src="/static/vendor/echarts.min.js" defer></script>
-  <script src="/static/app.js" defer></script>
+  <script src="/static/app.js?v={{ version }}" defer></script>
 </head>
 <body>
   <header class="top">

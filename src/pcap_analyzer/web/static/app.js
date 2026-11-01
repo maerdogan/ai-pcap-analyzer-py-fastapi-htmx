@@ -51,28 +51,38 @@
   }
 
   const INK = "#14263a", MUTED = "#55677a", LINE = "#c9d3db";
+  function download(url, name) {
+    Object.assign(document.createElement("a"), { href: url, download: name }).click();
+  }
   function saveSvg(option, name, el) {
     const c = echarts.init(null, null, { renderer: "svg", ssr: true, width: el.clientWidth, height: el.clientHeight });
     c.setOption(option);
     const url = URL.createObjectURL(new Blob([c.renderToSVGString()], { type: "image/svg+xml" }));
-    const a = Object.assign(document.createElement("a"), { href: url, download: name + ".svg" });
-    a.click();
+    download(url, name + ".svg");
     URL.revokeObjectURL(url);
     c.dispose();
   }
-  const tools = (name) => ({ right: 0, feature: {
-    saveAsImage: { name, title: "Save as PNG", backgroundColor: "#edf1f4" },
-    mySvg: { show: true, title: "Save as SVG", icon: "path://M4 4h16v16H4z", onclick: (m, api) => saveSvg(api.getOption(), name, api.getDom()) },
-  } });
+  function chartButtons(el, chart, option) {
+    const bar = document.createElement("p");
+    bar.className = "chart-actions";
+    const add = (label, onClick) => {
+      const b = Object.assign(document.createElement("button"), { type: "button", textContent: label, className: "link" });
+      b.addEventListener("click", onClick);
+      bar.append(b);
+    };
+    add("Save as PNG", () => download(chart.getDataURL({ type: "png", pixelRatio: 2, backgroundColor: "#edf1f4" }), el.dataset.name + ".png"));
+    add("Save as SVG", () => saveSvg(option, el.dataset.name, el));
+    el.after(bar);
+  }
   const CHARTS = {
-    histogram: (data, name) => ({
-      toolbox: tools(name), grid: { left: 44, right: 12, top: 30, bottom: 56 }, tooltip: {},
+    histogram: (data) => ({
+      grid: { left: 44, right: 12, top: 30, bottom: 56 }, tooltip: {},
       xAxis: { type: "category", data: data.map((d) => d.label), axisLabel: { rotate: 40, color: MUTED }, axisLine: { lineStyle: { color: LINE } } },
       yAxis: { type: "value", minInterval: 1, axisLabel: { color: MUTED }, splitLine: { lineStyle: { color: LINE } } },
       series: [{ type: "bar", data: data.map((d) => d.requests), itemStyle: { color: "#1f7fbf" }, barCategoryGap: "12%" }],
     }),
-    statuses: (data, name) => ({
-      toolbox: tools(name), grid: { left: 50, right: 12, top: 30, bottom: 28 }, tooltip: {},
+    statuses: (data) => ({
+      grid: { left: 50, right: 12, top: 30, bottom: 28 }, tooltip: {},
       xAxis: { type: "value", minInterval: 1, axisLabel: { color: MUTED }, splitLine: { lineStyle: { color: LINE } } },
       yAxis: { type: "category", inverse: true, data: data.map((d) => d.class), axisLabel: { color: INK } },
       series: [{ type: "bar", data: data.map((d) => ({ value: d.requests,
@@ -86,7 +96,9 @@
       el.dataset.ready = "1";
       const data = await (await fetch(el.dataset.src)).json();
       const chart = echarts.init(el, null, { renderer: "canvas" });
-      chart.setOption({ textStyle: { fontFamily: "Archivo, system-ui, sans-serif" }, animation: false, ...CHARTS[el.dataset.chart](data, el.dataset.name) });
+      const option = { textStyle: { fontFamily: "Archivo, system-ui, sans-serif" }, animation: false, ...CHARTS[el.dataset.chart](data) };
+      chart.setOption(option);
+      chartButtons(el, chart, option);
       addEventListener("resize", () => chart.resize());
     });
   }
