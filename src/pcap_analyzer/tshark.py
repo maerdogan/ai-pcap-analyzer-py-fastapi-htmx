@@ -18,7 +18,8 @@ AGG = "\x1f"
 SINGLE = [
     "frame.number", "frame.time_epoch", "frame.len", "frame.cap_len", "ip.src", "ip.dst", "ipv6.src", "ipv6.dst",
     "tcp.stream", "tcp.srcport", "tcp.dstport", "tcp.seq", "tcp.len", "tcp.flags", "tcp.window_size",
-    "tcp.options.mss_val", "tcp.analysis.ack_rtt", "dns.qry.name", "dns.time",
+    "tcp.options.mss_val", "tcp.options.wscale.shift", "tcp.options.sack_perm", "tcp.analysis.initial_rtt",
+    "tcp.analysis.ack_rtt", "dns.qry.name", "dns.time", "ip.flags.mf", "icmp.type", "icmp.code",
 ]
 MULTI = [
     "http.request.method", "http.request.uri", "http.request.version", "http.host", "http.response.code",
@@ -27,7 +28,7 @@ MULTI = [
     "http.response.line", "tcp.segment", "tls.segment", "tls.record.content_type", "tls.handshake.type",
     "tls.handshake.extensions_server_name", "tls.handshake.extensions.supported_version",
     "http2.type", "http2.streamid", "http2.flags", "http2.length", "http2.header.count",
-    "http2.header.name", "http2.header.value",
+    "http2.header.name", "http2.header.value", "http.file_data",
 ]
 # Flags that tshark's TCP analysis sets on a packet. Stored as events.
 EVENTS = [

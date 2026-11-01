@@ -1,12 +1,20 @@
 """Turn tshark packets into connections, HTTP transactions and TCP events."""
+import math
+import re
 from collections import deque
 from dataclasses import dataclass, field
 
+from . import causes, privacy, urls
 from .tshark import AGG, EVENTS
 
 SYN, ACK, FIN, RST = 0x02, 0x10, 0x01, 0x04
 TLS_ALERT = 21
 RTT_INDISTINCT = 0.0005  # below this, timestamps cannot tell near from far
+BODY_PREVIEW = 2000
+DELAYED_ACK_MIN, DELAYED_ACK_MAX = 0.03, 0.5
+SEND_AFTER_ACK = 0.01
+NO_BODY_METHODS = ("HEAD", "CONNECT")
+NO_BODY_STATUS = (204, 304)
 
 
 def many(p, key):
@@ -33,13 +41,42 @@ def to_float(v):
         return None
 
 
+def clean_line(line):
+    return line.removesuffix("\\r\\n").strip()  # tshark prints CRLF as literal text
+
+
 def header(block, name):
     """Find one header in tshark's http.request.line / http.response.line list."""
     prefix = name.lower() + ":"
     for line in block:
         if line.lower().startswith(prefix):
-            return line[len(prefix):].removesuffix("\\r\\n").strip()  # tshark prints CRLF as literal text
+            return clean_line(line[len(prefix):])
     return None
+
+
+def masked_headers(pairs):
+    return "\n".join(f"{k}: {privacy.mask_header(k, v)}" for k, v in pairs)
+
+
+def line_pairs(block):
+    pairs = []
+    for line in block:
+        name, _, value = clean_line(line).partition(":")
+        pairs.append((name, value.strip()))
+    return pairs
+
+
+def preview(raw):
+    """First part of a body as text; tshark gives hex, and binary data is left out rather than shown as noise."""
+    if not raw:
+        return None
+    try:
+        data = bytes.fromhex(raw.replace(":", "")[:BODY_PREVIEW * 2])
+    except ValueError:
+        return None
+    text = data.decode("utf-8", "replace")
+    bad = sum(1 for c in text if c == "\ufffd" or (ord(c) < 32 and c not in "\r\n\t"))
+    return None if bad > len(text) * 0.05 else privacy.mask_body(text)
 
 
 @dataclass
@@ -52,6 +89,7 @@ class Packet:
     flags: int
     tls_alert_only: bool
     retrans: bool
+    win: int = 0
 
 
 @dataclass
@@ -76,6 +114,10 @@ class Stream:
     tls_start: Packet | None = None
     tls_end: Packet | None = None
     pending_rtt: list = field(default_factory=list)
+    wscale: int | None = None
+    sack: bool = False
+    zero_windows: list = field(default_factory=list)
+    offload: bool = False
 
 
 class Builder:
@@ -84,7 +126,7 @@ class Builder:
         self.events = []
         self.dns = {}
         self.dns_rows = []
-        self.total = self.tcp = self.bytes = self.truncated = 0
+        self.total = self.tcp = self.bytes = self.truncated = self.fragments = self.frag_needed = 0
         self.t_first = self.t_last = None
 
     def add(self, p):
@@ -94,6 +136,10 @@ class Builder:
         cap = to_int(p["frame.cap_len"])
         if cap is not None and cap < size:
             self.truncated += 1
+        if first(p, "ip.flags.mf") in ("1", "True"):
+            self.fragments += 1
+        if first(p, "icmp.type") == "3" and first(p, "icmp.code") == "4":
+            self.frag_needed += 1
         t = float(p["frame.time_epoch"])
         self.t_first = t if self.t_first is None else min(self.t_first, t)
         self.t_last = t if self.t_last is None else max(self.t_last, t)
@@ -115,11 +161,14 @@ class Builder:
         payload = to_int(p["tcp.len"]) or 0
         ctypes = [to_int(x) for x in many(p, "tls.record.content_type")]
         retrans = bool(p.get("tcp.analysis.retransmission") or p.get("tcp.analysis.fast_retransmission"))
-        pk = Packet(frame, t, size, src, payload, flags, bool(ctypes) and all(c == TLS_ALERT for c in ctypes), retrans)
+        win = to_int(p.get("tcp.window_size")) or 0
+        pk = Packet(frame, t, size, src, payload, flags, bool(ctypes) and all(c == TLS_ALERT for c in ctypes), retrans, win)
         s.packets.append(pk)
         for e in EVENTS:
             if p.get(f"tcp.analysis.{e}"):
                 self.events.append((sid, frame, t, f"{src[0]}:{src[1]}", e))
+        if p.get("tcp.analysis.zero_window"):
+            s.zero_windows.append(pk)
         if flags & SYN and not flags & ACK:
             s.syn = s.syn or pk
             s.client = src
@@ -131,6 +180,12 @@ class Builder:
         mss = to_int(p.get("tcp.options.mss_val"))
         if mss:
             s.mss.append(mss)
+        if s.mss and payload > max(s.mss) and not s.tls_seen:
+            s.offload = True
+        shift = to_int(first(p, "tcp.options.wscale.shift"))
+        if shift is not None:
+            s.wscale = shift if s.wscale is None else min(s.wscale, shift)
+        s.sack = s.sack or bool(p.get("tcp.options.sack_perm"))
         rtt = to_float(p.get("tcp.analysis.ack_rtt"))
         if rtt is not None:
             s.pending_rtt.append((src, rtt))
@@ -159,6 +214,7 @@ class Builder:
         if methods:
             uris, hosts, versions = many(p, "http.request.uri"), many(p, "http.host"), many(p, "http.request.version")
             lines = many(p, "http.request.line")
+            bodies = many(p, "http.file_data")
             s.client = s.client or src
             for i, m in enumerate(methods):
                 s.requests.append(dict(
@@ -166,20 +222,27 @@ class Builder:
                     uri=uris[i] if i < len(uris) else None, host=hosts[i] if i < len(hosts) else None,
                     version=versions[i] if i < len(versions) else "HTTP/1.1",
                     xff=first(p, "http.x_forwarded_for"), request_id=header(lines, "x-request-id"),
-                    content_length=to_int(first(p, "http.content_length"))))
+                    content_length=to_int(first(p, "http.content_length")), headers=masked_headers(line_pairs(lines)),
+                    body=preview(bodies[0]) if bodies else None))
         codes = many(p, "http.response.code")
         if codes:
             s.client = s.client or dst
             phrases = many(p, "http.response.phrase")
             lines = many(p, "http.response.line")
             lengths = many(p, "http.content_length")
+            bodies = many(p, "http.file_data")
+            versions = many(p, "http.response.version")
             for i, c in enumerate(codes):
+                head = f"{versions[i] if i < len(versions) else 'HTTP/1.1'} {c} {phrases[i] if i < len(phrases) else ''}"
+                head_len = len(head) + 2 + sum(len(clean_line(x)) + 2 for x in lines) + 2
                 s.responses.append(dict(
                     frame=pk.frame, start_frame=min(segs + [pk.frame]), status=int(c),
                     phrase=phrases[i] if i < len(phrases) else None,
                     content_length=to_int(lengths[i]) if i < len(lengths) else None,
                     content_type=first(p, "http.content_type"), encoding=first(p, "http.content_encoding"),
-                    transfer=first(p, "http.transfer_encoding"), server_timing=header(lines, "server-timing")))
+                    transfer=first(p, "http.transfer_encoding"), server_timing=header(lines, "server-timing"),
+                    response_time=header(lines, "x-response-time"), headers=masked_headers(line_pairs(lines)),
+                    head_len=head_len, body=preview(bodies[0]) if bodies else None))
 
     def _http2(self, p, s, pk, src, dst):
         types = many(p, "http2.type")
@@ -258,19 +321,104 @@ def finish_stream(s):
     kind = "HTTP/2" if s.h2 else "HTTP" if s.requests or s.responses else "TCP"
     if s.tls_seen:
         kind = "HTTPS/2" if s.h2 else "HTTPS" if txns else "TLS"
+    pay_c = sum(p.payload for p in s.packets if p.src == client)
+    pay_s = sum(p.payload for p in s.packets if p.src != client)
     conn = dict(
         stream=s.sid, client_ip=client[0], client_port=client[1], server_ip=server[0], server_port=server[1],
         kind=kind, first_frame=s.packets[0].frame, start_time=s.packets[0].t, end_time=s.packets[-1].t,
         duration=s.packets[-1].t - s.packets[0].t, packets=len(s.packets), bytes=sum(p.size for p in s.packets),
-        payload_client=sum(p.payload for p in s.packets if p.src == client),
-        payload_server=sum(p.payload for p in s.packets if p.src != client),
+        payload_client=pay_c, payload_server=pay_s,
         handshake_seen=s.syn is not None and s.synack is not None, connect_time=connect,
         rtt_server=rtt_srv, rtt_client=rtt_cli, capture_point=capture_point(rtt_srv, rtt_cli), mss=min(s.mss) if s.mss else None,
         tls_version=s.tls_version, sni=s.sni, tls_time=tls_time,
         close_type="RST" if closer and closer.flags & RST else "FIN" if closer else None,
         closed_by=None if not closer else "client" if closer.src == client else "server",
-        transactions=len(txns))
+        transactions=len(txns), sack=s.sack, wscale=s.wscale, min_window=min((p.win for p in s.packets if not p.flags & SYN), default=None),
+        retransmissions=sum(1 for p in s.packets if p.retrans), zero_windows=len(s.zero_windows),
+        byte_ratio_db=_ratio_db(pay_c, pay_s), offload=s.offload)
+    _enrich(s, client, txns, conn)
     return conn, txns
+
+
+def _ratio_db(a, b):
+    """How one-sided a connection is, in dB. 3 dB is about double, capped at 100."""
+    if not a or not b:
+        return 100.0 if a or b else 0.0
+    return round(min(100.0, 10 * math.log10(max(a, b) / min(a, b))), 1)
+
+
+def _stalls(s, lo, hi):
+    """Retransmission and zero window waiting inside a frame range."""
+    last_seen = {}
+    retrans_n, retrans_t = 0, 0.0
+    for p in s.packets:
+        if p.frame > hi:
+            break
+        if p.payload:
+            if lo <= p.frame and p.retrans and p.src in last_seen:
+                retrans_n += 1
+                retrans_t += p.t - last_seen[p.src]
+            last_seen[p.src] = p.t
+    zero_t = 0.0
+    for z in s.zero_windows:
+        if lo <= z.frame <= hi:
+            after = next((p for p in s.packets if p.frame > z.frame and p.src == z.src and p.win > 0), None)
+            if after:
+                zero_t += after.t - z.t
+    return retrans_n, retrans_t, zero_t
+
+
+def _delayed_ack(s, sender, lo, hi):
+    """Time a sender sat idle until a late bare ACK released its next segment."""
+    pk = [p for p in s.packets if lo <= p.frame <= hi]
+    total = 0.0
+    prev = None
+    for p in pk:
+        if p.src != sender or not p.payload:
+            continue
+        if prev is not None:
+            acks = [a for a in pk if prev.frame < a.frame < p.frame and a.src != sender and not a.payload and a.flags & ACK]
+            if acks and DELAYED_ACK_MIN <= acks[-1].t - prev.t <= DELAYED_ACK_MAX and p.t - acks[-1].t <= SEND_AFTER_ACK:
+                total += p.t - prev.t
+        prev = p
+    return total
+
+
+def _enrich(s, client, txns, conn):
+    server = next((e for e in (s.a, s.b) if e != client), None)
+    for i, t in enumerate(txns):
+        lo = t["req_frame"]
+        hi = t["last_frame"] or t["req_frame"]
+        n, retrans, zero = _stalls(s, lo, hi)
+        delayed_req = _delayed_ack(s, client, lo, t["resp_frame"] or hi)
+        delayed_resp = _delayed_ack(s, server, t["resp_frame"], hi) if t["resp_frame"] else 0.0
+        t.update(retrans_count=n, retrans_time=retrans, zero_window_time=zero, delayed_ack_time=delayed_req + delayed_resp,
+                 queue_time=0.0, network=conn["rtt_server"] if t["answered"] else 0.0)
+        prev = txns[i - 1] if i else None
+        if prev and t["h2_stream"] is None and prev["resp_end"] and prev["resp_end"] > t["req_end"] and t["answered"]:
+            t["queue_time"] = prev["resp_end"] - t["req_end"]
+        if t["wait"] is not None and t["network"] is not None:
+            svc = t["wait"] - t["network"] - t["queue_time"]
+            t["service"] = svc if svc >= 0 else None
+        if t["queue_time"] and t["service"] is None:
+            t["service"] = 0.0
+        moved = retrans + zero + delayed_resp
+        t["transfer_clean"] = max(_or0(t["transfer"]) - moved, 0.0)
+        t["request_clean"] = max(t["request_send"] - delayed_req - max(moved - _or0(t["transfer"]), 0.0), 0.0)
+        if t["head_len"] is not None:
+            t["body_bytes"] = max(t["resp_bytes"] - t["head_len"], 0)
+        elif t["http_version"] == "HTTP/2":
+            t["body_bytes"] = t["resp_bytes"]
+        clen = t["resp_content_length"]
+        t["truncated"] = bool(t["answered"] and clen and t["body_expected"] and t["body_bytes"] is not None
+                              and t["body_bytes"] < clen and not conn["kind"].startswith("HTTPS"))
+        t["server_reported"] = causes.parse_server_timing(t["server_timing"])
+        t["cause"], t["cause_share"], flags = causes.classify(t, conn)
+        t["flags"] = ",".join(flags)
+
+
+def _or0(v):
+    return v or 0.0
 
 
 def _h1_transactions(s, client, rtt_srv):
@@ -297,9 +445,20 @@ def _h1_transactions(s, client, rtt_srv):
         out.append(_row(s, q["method"], q["uri"], q["host"], q["version"], r and r["status"], r and r["phrase"],
                         q_first, q_last, r_first, r_last, rtt_srv, sum(p.payload for p in req_pk if not p.retrans),
                         sum(p.payload for p in resp_pk if not p.retrans), q["content_length"], r and r["content_length"],
-                        r and r["content_type"], r and r["encoding"], r and r["transfer"], r and r["server_timing"],
+                        r and r["content_type"], r and r["encoding"], r and r["transfer"], r and (r["server_timing"] or _rt(r)),
                         q["xff"], q["request_id"], None))
+        out[-1].update(req_headers=q["headers"], resp_headers=r and r["headers"], req_body=q["body"], resp_body=r and r["body"],
+                       head_len=r and r["head_len"], last_frame=r_last.frame if r_last else None,
+                       body_expected=bool(r) and q["method"] not in NO_BODY_METHODS and r["status"] not in NO_BODY_STATUS)
     return out
+
+
+def _rt(r):
+    """Turn X-Response-Time into Server-Timing form so one parser reads both."""
+    m = re.fullmatch(r"([0-9.]+)\s*(ms|s)?", r["response_time"] or "")
+    if not m:
+        return None
+    return f"app;dur={float(m[1]) * (1000 if m[2] == 's' else 1)}"
 
 
 def _h2_transactions(s, client, rtt_srv):
@@ -318,7 +477,14 @@ def _h2_transactions(s, client, rtt_srv):
                         to_int(q.get("content-length")), to_int((r or {}).get("content-length")),
                         (r or {}).get("content-type"), (r or {}).get("content-encoding"), None, (r or {}).get("server-timing"),
                         q.get("x-forwarded-for"), q.get("x-request-id"), sid2))
+        out[-1].update(req_headers=_h2_headers(q), resp_headers=_h2_headers(r) if r else None, req_body=None, resp_body=None,
+                       head_len=None, last_frame=r_last.frame if r_last else None,
+                       body_expected=bool(r) and q.get(":method") not in NO_BODY_METHODS)
     return out
+
+
+def _h2_headers(h):
+    return masked_headers((k, v) for k, v in h.items() if k not in ("frame", "t"))
 
 
 def _row(s, method, uri, host, version, status, phrase, q_first, q_last, r_first, r_last, rtt_srv,
@@ -329,7 +495,7 @@ def _row(s, method, uri, host, version, status, phrase, q_first, q_last, r_first
         service = None  # RTT estimate exceeded the wait, so the split is not measurable
     end = r_last or q_last
     return dict(
-        stream=s.sid, h2_stream=h2_stream, method=method, uri=uri, host=host, http_version=version,
+        stream=s.sid, h2_stream=h2_stream, method=method, uri=privacy.mask_uri(uri), url_template=urls.template(uri), host=host, http_version=version,
         status=status, phrase=phrase, answered=r_first is not None, req_frame=q_first.frame, resp_frame=r_first.frame if r_first else None,
         req_start=q_first.t, req_end=q_last.t, resp_start=r_first.t if r_first else None, resp_end=r_last.t if r_last else None,
         request_send=q_last.t - q_first.t, wait=wait, service=service,

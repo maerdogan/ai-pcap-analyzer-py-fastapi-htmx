@@ -2,6 +2,54 @@
 
 Each new feature is a minor version. Each bug fix is a patch version.
 
+## 0.16.0 (2026-11-01)
+
+### Added
+
+- Root cause for each request with a plain explanation: slow service, network delay, packet loss, slow receiver, delayed ACK, queueing, gateway error, incomplete response and more.
+
+## 0.15.0 (2026-11-01)
+
+### Added
+
+- Slowest 10 requests with a time breakdown: retransmission wait, receiver window, delayed ACK, queueing, connection reuse, DNS time, server-reported time, compression, chunked transfer, MSS and fragmentation.
+
+## 0.14.0 (2026-11-01)
+
+### Added
+
+- Focused inspection by source, destination, port and connection type, with URL and size filters.
+
+## 0.13.0 (2026-11-01)
+
+### Added
+
+- Grouping by host name from HTTP Host or TLS SNI, with the server address as fallback.
+
+## 0.12.0 (2026-11-01)
+
+### Added
+
+- TCP summary per connection: MSS, SACK, window scale, smallest window, retransmissions and byte ratio.
+
+## 0.11.0 (2026-11-01)
+
+### Added
+
+- TCP connection list with request counts and average times, plus the first 5 or top 10 percent slowest requests of a connection.
+
+## 0.10.0 (2026-11-01)
+
+### Added
+
+- URL grouping by shape, such as `/users/{id}`, with status codes under each group. Secrets in URLs, headers and body previews are masked before saving.
+
+## 0.9.0 (2026-11-01)
+
+### Added
+
+- Capture overview with HTTP and TCP timing and CLI commands for reports.
+
 ## 0.8.3 (2026-11-01)
 
 ### Fixed

@@ -1,6 +1,7 @@
 """Analyze a capture once and keep the result; the same input reopens the saved result."""
 import hashlib
 import json
+import re
 import shutil
 import time
 from dataclasses import astuple, dataclass
@@ -11,7 +12,14 @@ from .config import Settings
 from .parser import Builder, finish_stream
 
 
+DNS_WINDOW_S = 5.0
+
+
 class CaptureTooLarge(Exception):
+    pass
+
+
+class NotFound(Exception):
     pass
 
 
@@ -46,10 +54,34 @@ def _digest(paths, flt):
 def _warnings(b, conns, keyed, warnings):
     if b.truncated:
         warnings.append("frames_truncated")
+    if any(c["offload"] for c in conns):
+        warnings.append("offload_suspected")
     tls_undecrypted = [c for c in conns if c["kind"] == "TLS"]
     if tls_undecrypted:
         warnings.append("tls_key_did_not_decrypt" if keyed else "tls_not_decrypted")
     return sorted(set(warnings))
+
+
+def _attach_dns(txns, dns):
+    """Link a lookup to a new connection when its answer came shortly before that connection."""
+    by_name = {}
+    for name, duration, _, t in dns:
+        if name:
+            by_name.setdefault(name.lower(), []).append((t, duration))
+    for x in txns:
+        host = (x.get("host") or "").split(":")[0].lower()
+        if x.get("connect_time") is None or host not in by_name:
+            continue
+        near = [(t, d) for t, d in by_name[host] if 0 <= x["req_start"] - t <= DNS_WINDOW_S]
+        if near:
+            x["dns_time"] = max(near)[1]
+
+
+def _attach_packet_size(b, txns):
+    for x in txns:
+        s = b.streams[x["stream"]]
+        hi = x["last_frame"] or x["req_frame"]
+        x["max_packet"] = max((p.size for p in s.packets if x["req_frame"] <= p.frame <= hi), default=0)
 
 
 def analyze(path, keylog=None, rsa_key=None, flt=None, settings=None, use_cached=True):
@@ -76,6 +108,8 @@ def analyze(path, keylog=None, rsa_key=None, flt=None, settings=None, use_cached
         conns.append(c)
         txns += t
     txns.sort(key=lambda x: x["req_start"])
+    _attach_dns(txns, b.dns_rows)
+    _attach_packet_size(b, txns)
 
     tmp = settings.workdir / f".{aid}.tmp"
     shutil.rmtree(tmp, ignore_errors=True)
@@ -86,12 +120,22 @@ def analyze(path, keylog=None, rsa_key=None, flt=None, settings=None, use_cached
         id=aid, filename=path.name, size=path.stat().st_size, created=time.time(), tshark=ts_version, version=__version__,
         decryption="keylog" if keylog else "rsa_key" if rsa_key else None, filter=flt.expression(),
         packets=b.total, tcp_packets=b.tcp, bytes=b.bytes, connections=len(conns), transactions=len(txns),
-        capture_start=b.t_first, capture_end=b.t_last, duration_s=round(time.monotonic() - started, 3),
+        ip_fragments=b.fragments, frag_needed=b.frag_needed, capture_start=b.t_first, capture_end=b.t_last, duration_s=round(time.monotonic() - started, 3),
         warnings=_warnings(b, conns, bool(keylog or rsa_key), warnings))
     (tmp / "meta.json").write_text(json.dumps(meta, indent=2))
     shutil.rmtree(out, ignore_errors=True)
     tmp.rename(out)
     return Analysis(aid, out, meta, False)
+
+
+def open_analysis(aid, settings=None):
+    settings = settings or Settings()
+    if not re.fullmatch(r"[0-9a-f]{20}", aid):
+        raise NotFound(aid)
+    d = settings.workdir / aid
+    if not (d / "meta.json").exists():
+        raise NotFound(aid)
+    return Analysis(aid, d, json.loads((d / "meta.json").read_text()), True)
 
 
 def list_analyses(settings=None):
@@ -104,8 +148,9 @@ def list_analyses(settings=None):
 
 def delete(aid, settings=None):
     settings = settings or Settings()
-    target = settings.workdir / aid
-    if not (target / "meta.json").exists():
+    try:
+        target = open_analysis(aid, settings).dir
+    except NotFound:
         return False
     shutil.rmtree(target)
     return True

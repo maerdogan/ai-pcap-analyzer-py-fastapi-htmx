@@ -254,3 +254,67 @@ def test_negative_service_is_not_reported():
     s = parser.Stream(0, ("a", 1), ("b", 2))
     row = parser._row(s, "GET", "/", None, "HTTP/1.1", 200, None, p, p, r, r, 0.911, 0, 0, None, None, None, None, None, None, None, None, None)
     assert row["wait"] == pytest.approx(0.771) and row["service"] is None
+
+
+def causes_by_uri(a):
+    return {t["uri"]: t["cause"] for t in txns(a)}
+
+
+@pytest.mark.parametrize("uri,cause", [
+    ("/api/reports/2024", "service"), ("/files/large.bin", "loss"), ("/files/big2.bin", "slow_client"),
+    ("/api/slow", "connection_reset"), ("/api/nagle", "delayed_ack"), ("/files/cut.bin", "truncated"),
+    ("/api/second", "queueing"), ("/api/far", "network"), ("/api/users/123", "normal"), ("/api/items", "normal"),
+])
+def test_cause(http, uri, cause):
+    assert causes_by_uri(http)[uri] == cause
+
+
+def test_gateway_cause(http):
+    assert {t["cause"] for t in txns(http, "uri='/api/pay'")} == {"gateway"}
+
+
+def test_stall_times(http):
+    q = by_uri(http)
+    assert q["/files/large.bin"]["retrans_count"] == 2 and q["/files/large.bin"]["retrans_time"] == pytest.approx(0.8, abs=0.01)
+    assert q["/files/big2.bin"]["zero_window_time"] == pytest.approx(1.2, abs=0.01)
+    assert q["/api/nagle"]["delayed_ack_time"] == pytest.approx(0.201, abs=0.01)
+    assert q["/api/second"]["queue_time"] == pytest.approx(1.0, abs=0.01)
+    assert q["/api/first"]["queue_time"] == 0
+
+
+def test_truncated_flag_and_dns(http):
+    q = by_uri(http)
+    assert q["/files/cut.bin"]["truncated"] is True and q["/files/cut.bin"]["body_bytes"] == 6000
+    assert q["/files/large.bin"]["truncated"] is False
+    assert q["/api/users/123"]["dns_time"] == pytest.approx(0.12, abs=0.001)
+    assert q["/api/users/456"]["dns_time"] is None
+
+
+def test_server_reported_time(http):
+    assert by_uri(http)["/api/items"]["server_reported"] == pytest.approx(0.1205)
+
+
+def test_small_mss_flag(http):
+    assert "small_mss" in by_uri(http)["/files/mss.bin"]["flags"]
+
+
+def test_url_template():
+    from pcap_analyzer.urls import template
+    assert template("/users/123/orders?x=1") == "/users/{id}/orders"
+    assert template("/a/550e8400-e29b-41d4-a716-446655440000/b") == "/a/{id}/b"
+    assert template("/static/app.js") == "/static/app.js"
+    assert template("http://h.example/x/9") == "/x/{id}"
+    assert template("/") == "/"
+
+
+def test_masking():
+    from pcap_analyzer import privacy
+    assert privacy.mask_uri("/a?user=x&password=abc&token=z") == "/a?user=x&password=***&token=***"
+    assert privacy.mask_header("Cookie", "a=b") == "***" and privacy.mask_header("Accept", "x") == "x"
+    assert privacy.mask_body('{"password":"abc","x":1}') == '{"password":"***","x":1}'
+    assert privacy.mask_body("user=a&passwd=b") == "user=a&passwd=***"
+
+
+def test_secrets_are_not_stored(samples, settings, tmp_path):
+    a = engine.analyze(samples / "https_tls13.pcap", keylog=samples / "https_tls13.keylog", settings=settings)
+    assert all("sample-gen" in t["req_headers"] for t in txns(a))

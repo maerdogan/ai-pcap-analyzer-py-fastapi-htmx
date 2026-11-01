@@ -3,7 +3,7 @@ import argparse
 import json
 import sys
 
-from . import __version__, engine, tshark
+from . import __version__, engine, reports, tshark
 from .config import Settings
 
 
@@ -39,6 +39,22 @@ def main(argv=None):
     dl = sub.add_parser("delete", help="delete a saved analysis")
     dl.add_argument("id")
     sub.add_parser("purge", help="delete analyses past their retention time")
+    rp = sub.add_parser("report", help="print a report of a saved analysis as JSON")
+    rp.add_argument("id")
+    rp.add_argument("section", choices=["overview", "urls", "connections", "hosts", "issues", "slowest"])
+    cn = sub.add_parser("connection", help="slowest requests of one TCP connection, as JSON")
+    cn.add_argument("id")
+    cn.add_argument("stream", type=int)
+    cn.add_argument("--percent", action="store_true", help="top 10 percent instead of the first 5")
+    ins = sub.add_parser("inspect", help="focused view on one traffic pair, as JSON")
+    ins.add_argument("id")
+    ins.add_argument("--src")
+    ins.add_argument("--dst")
+    ins.add_argument("--port", type=int)
+    ins.add_argument("--kind", choices=["TCP", "TLS", "HTTP", "HTTPS", "HTTP/2", "HTTPS/2"])
+    ins.add_argument("--url")
+    ins.add_argument("--min-size", type=int)
+    ins.add_argument("--size-of", choices=list(reports.SIZE_SQL), default="total")
     args = ap.parse_args(argv)
     settings = Settings()
     try:
@@ -56,7 +72,19 @@ def main(argv=None):
             return 0 if engine.delete(args.id, settings) else 1
         elif args.cmd == "purge":
             print(engine.purge(settings))
-    except (tshark.TsharkError, engine.CaptureTooLarge, OSError, ValueError) as e:
+        elif args.cmd in ("report", "connection", "inspect"):
+            a = engine.open_analysis(args.id, settings)
+            with a.connect() as db:
+                if args.cmd == "connection":
+                    out = reports.connection_top(db, args.stream, args.percent)
+                elif args.cmd == "inspect":
+                    out = reports.inspect(db, reports.Inspect(args.src, args.dst, args.port, args.kind, args.url, args.min_size, args.size_of))
+                else:
+                    out = {"overview": lambda: reports.overview(db, a.meta), "urls": lambda: reports.url_groups(db),
+                           "connections": lambda: reports.connections(db), "hosts": lambda: reports.hosts(db),
+                           "issues": lambda: reports.issues(db, a.meta), "slowest": lambda: reports.slowest(db)}[args.section]()
+            print(json.dumps(out, indent=2, default=str))
+    except (tshark.TsharkError, engine.CaptureTooLarge, engine.NotFound, OSError, ValueError) as e:
         print(f"error: {e}", file=sys.stderr)
         return 1
     return 0
