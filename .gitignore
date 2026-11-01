@@ -1,0 +1,25 @@
+# Generated samples, including test keys
+samples/
+
+# Captures and TLS secrets must never be committed
+*.pcap
+*.pcapng
+*.cap
+*.keylog
+*.pem
+*.key
+
+# Local analysis results
+*.duckdb
+*.duckdb.wal
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# Packaging
+*.egg-info/
+build/
+dist/
+pcap-analyzer.conf
