@@ -37,7 +37,7 @@ kubectl -n pcap-analyzer create secret generic pcap-analyzer-admin --from-litera
 kubectl apply -k deploy/kubernetes
 ```
 
-Keep one replica: sessions and running jobs live in memory. The Ingress annotations assume ingress-nginx. Other controllers need their own upload limit of at least 110 MB.
+Keep one replica: sessions and running jobs live in memory. The Ingress annotations assume ingress-nginx. Other controllers need their own upload limit of at least 110 MB. `deploy/vks` is an example overlay for F5 NGINX Ingress Controller, which uses `nginx.org` annotations.
 
 To use it without an Ingress:
 

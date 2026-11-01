@@ -1,0 +1,22 @@
+# Envoy Gateway v1.9.3 for the analyzer cluster. Like the platform's NGINX controllers,
+# it runs in the application namespace and watches only that namespace.
+# The platform owns the Gateway API CRDs, so the chart must not install them.
+crds:
+  enabled: false
+config:
+  envoyGateway:
+    provider:
+      type: Kubernetes
+      kubernetes:
+        watch:
+          type: Namespaces
+          namespaces:
+            - pcap-analyzer
+deployment:
+  envoyGateway:
+    resources:
+      requests:
+        cpu: 50m
+        memory: 128Mi
+      limits:
+        memory: 512Mi

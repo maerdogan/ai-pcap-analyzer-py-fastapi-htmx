@@ -18,7 +18,7 @@ All changes made on the same day are one minor version.
 - Web interface with a single admin login, capture upload, history, issues list, response time chart, sortable tables, request content view and saved filters.
 - Comparison of two captures with changes per URL and phase, separate filters for each side, and matching of the same requests seen at two points.
 - Export of tables to CSV, Excel and JSON, charts to PNG and SVG, a single-file HTML report, and one connection as PCAP.
-- Container image, Compose file, Kubernetes manifests, systemd unit and install guide.
+- Container image, Compose file, Kubernetes manifests, an example overlay with a Gateway API route, systemd unit and install guide.
 - Command line: `analyze`, `report`, `connection`, `inspect`, `compare`, `list`, `delete`, `purge`, `serve` and `hash-password`.
 - Professional interface layout: side navigation, metrics band, sorted time breakdown and aligned slowest-request tables.
 - Synthetic sample generator with known timings, used by the tests.

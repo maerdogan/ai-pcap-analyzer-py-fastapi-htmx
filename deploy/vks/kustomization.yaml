@@ -1,0 +1,11 @@
+# Overlay for the local VKS-style platform: analyzer cluster, namespace pcap-analyzer.
+# The namespace, IP pool and F5 NGINX Ingress Controller come from the platform.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: pcap-analyzer
+resources:
+  - ../base
+  - ingress.yaml
+images:
+  - name: registry.example.internal/pcap-analyzer
+    newName: 192.168.64.5:5000/vks/pcap-analyzer

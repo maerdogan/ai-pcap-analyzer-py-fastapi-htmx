@@ -11,7 +11,7 @@ COPY src ./src
 RUN pip install --no-cache-dir . && rm -rf /app/src
 
 RUN useradd --uid 10001 --create-home --home-dir /home/analyzer analyzer && mkdir /data && chown analyzer /data
-ENV PCAP_ANALYZER_WORKDIR=/data
+ENV PCAP_ANALYZER_WORKDIR=/data HOME=/tmp
 USER 10001
 EXPOSE 8000
 VOLUME /data

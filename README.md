@@ -14,7 +14,7 @@ Upload a PCAP and see where the time went: connection setup, network delay, serv
 - HTTPS decryption with a TLS key log file or RSA key
 - Export to CSV, Excel, JSON, PNG, SVG, HTML and PCAP
 
-> **Status: early release.** Tested with synthetic captures and tshark 4.6. It has not yet been tested with real NetScaler `nstrace` files, and the container files have not been run yet.
+> **Status: early release.** Tested with synthetic captures on tshark 4.4 and 4.6, and in a Kubernetes pod behind an NGINX Ingress. It has not yet been tested with real NetScaler `nstrace` files.
 
 ## Quick start
 

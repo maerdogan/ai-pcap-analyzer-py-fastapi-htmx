@@ -17,6 +17,7 @@ samples/
 __pycache__/
 *.pyc
 .venv/
+.pytest_cache/
 
 # Packaging
 *.egg-info/

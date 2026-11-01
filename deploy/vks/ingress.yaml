@@ -1,0 +1,24 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: pcap-analyzer
+  annotations: # F5 NGINX Ingress Controller, so nginx.org and not nginx.ingress.kubernetes.io
+    nginx.org/client-max-body-size: 110m
+    nginx.org/proxy-read-timeout: 300s
+    nginx.org/proxy-send-timeout: 300s
+spec:
+  ingressClassName: nginx-pcap-analyzer
+  tls:
+    - hosts: [pcap-analyzer.ubuntu.local]
+      secretName: pcap-analyzer-tls
+  rules:
+    - host: pcap-analyzer.ubuntu.local
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: pcap-analyzer
+                port:
+                  number: 8000
