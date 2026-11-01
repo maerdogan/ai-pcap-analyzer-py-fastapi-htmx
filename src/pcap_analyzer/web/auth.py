@@ -3,10 +3,13 @@ import base64
 import hashlib
 import hmac
 import secrets
+import threading
 import time
+from collections import deque
 
 SESSION_S = 12 * 3600
 MAX_FAILS = 5
+MAX_TOTAL_FAILS = 30  # across all clients, because a client address can be faked
 FAIL_WINDOW_S = 300
 SCRYPT = dict(n=2 ** 14, r=8, p=1)
 
@@ -47,21 +50,26 @@ class Auth:
         self.user = user
         self.hash = password_hash or hash_password(password)
         self.sessions = {}
-        self.fails = {}
+        self.fails = deque()  # (time, client). Blocking stops new entries, so this stays small.
+        self.lock = threading.Lock()
 
     def blocked(self, client):
-        now = time.time()
-        self.fails[client] = [t for t in self.fails.get(client, []) if now - t < FAIL_WINDOW_S]
-        return len(self.fails[client]) >= MAX_FAILS
+        cutoff = time.time() - FAIL_WINDOW_S
+        with self.lock:
+            while self.fails and self.fails[0][0] < cutoff:
+                self.fails.popleft()
+            return len(self.fails) >= MAX_TOTAL_FAILS or sum(c == client for _, c in self.fails) >= MAX_FAILS
 
     def login(self, client, user, password):
         ok_pw = verify_password(password, self.hash)  # always hash, so timing does not reveal the user name
         if hmac.compare_digest(user.encode(), self.user.encode()) and ok_pw:
-            self.fails.pop(client, None)
+            with self.lock:
+                self.fails = deque(f for f in self.fails if f[1] != client)
             token = secrets.token_urlsafe(32)
             self.sessions[token] = time.time() + SESSION_S
             return token
-        self.fails.setdefault(client, []).append(time.time())
+        with self.lock:
+            self.fails.append((time.time(), client))
         return None
 
     def valid(self, token):

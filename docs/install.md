@@ -77,8 +77,9 @@ Edit `/etc/pcap-analyzer.env` first, and set `PCAP_ANALYZER_BEHIND_PROXY=0` when
 | `PCAP_ANALYZER_ADMIN_PASSWORD_HASH` | | Password hash, preferred |
 | `PCAP_ANALYZER_ADMIN_PASSWORD` | | Plain password, as the alternative |
 | `PCAP_ANALYZER_BEHIND_PROXY` | `0` | `1` when an HTTPS proxy is in front |
+| `PCAP_ANALYZER_TRUSTED_PROXIES` | | Proxy addresses or networks whose forwarded headers are believed, such as `10.0.0.5,10.1.0.0/16`. When empty, all users behind the proxy share one login lockout |
 | `PCAP_ANALYZER_WORKDIR` | `~/.local/share/pcap-analyzer` | Where results are saved |
 | `PCAP_ANALYZER_MAX_SIZE_MB` | `100` | Largest accepted capture |
-| `PCAP_ANALYZER_TTL_DAYS` | `7` | Days results are kept |
+| `PCAP_ANALYZER_TTL_DAYS` | `7` | Days results are kept. The server removes older ones every hour |
 | `PCAP_ANALYZER_MAX_JOBS` | `2` | Analyses running at once |
 | `PCAP_ANALYZER_KEEP_CAPTURE` | `1` | Keep the capture for PCAP export, `0` to delete it after analysis |

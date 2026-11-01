@@ -19,5 +19,7 @@ def run(settings, host, port, cert=None, key=None):
     if not cert and not settings.behind_proxy and not _is_loopback(host):
         raise ValueError("Passwords and TLS keys need HTTPS: give --cert and --key, or set PCAP_ANALYZER_BEHIND_PROXY=1 behind an HTTPS proxy")
     app = create_app(settings, secure_cookie=bool(cert) or settings.behind_proxy)
-    uvicorn.run(app, host=host, port=port, ssl_certfile=cert, ssl_keyfile=key, proxy_headers=settings.behind_proxy,
-                forwarded_allow_ips="*" if settings.behind_proxy else None, log_level="info")
+    # Forwarded headers are believed only from proxies named here, or anyone could fake their address.
+    trusted = settings.trusted_proxies if settings.behind_proxy else None
+    uvicorn.run(app, host=host, port=port, ssl_certfile=cert, ssl_keyfile=key, proxy_headers=bool(trusted),
+                forwarded_allow_ips=trusted, log_level="info")

@@ -19,4 +19,5 @@ class Settings:
     admin_user: str = field(default_factory=lambda: os.environ.get("PCAP_ANALYZER_ADMIN_USER", "admin"))
     admin_password: str | None = field(default_factory=lambda: os.environ.get("PCAP_ANALYZER_ADMIN_PASSWORD"))
     admin_password_hash: str | None = field(default_factory=lambda: os.environ.get("PCAP_ANALYZER_ADMIN_PASSWORD_HASH"))
+    trusted_proxies: str | None = field(default_factory=lambda: os.environ.get("PCAP_ANALYZER_TRUSTED_PROXIES") or None)
     behind_proxy: bool = field(default_factory=lambda: os.environ.get("PCAP_ANALYZER_BEHIND_PROXY", "") == "1")

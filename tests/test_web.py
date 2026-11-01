@@ -1,11 +1,14 @@
+import gzip
+import json
 import re
 import time
 
 import pytest
 from fastapi.testclient import TestClient
 
+from pcap_analyzer import engine
 from pcap_analyzer.web.app import create_app
-from pcap_analyzer.web.auth import Auth, hash_password, verify_password
+from pcap_analyzer.web.auth import FAIL_WINDOW_S, MAX_FAILS, MAX_TOTAL_FAILS, Auth, hash_password, verify_password
 
 PW = "test-pass-for-unit-tests"
 
@@ -65,6 +68,55 @@ def test_wrong_password_and_lockout(anon):
     for _ in range(5):
         assert anon.post("/login", data={"username": "admin", "password": "wrong"}).status_code == 401
     assert anon.post("/login", data={"username": "admin", "password": PW}).status_code == 429
+
+
+def test_many_addresses_share_a_limit():
+    a = Auth("admin", password="right")
+    for i in range(MAX_TOTAL_FAILS):
+        assert not a.blocked(f"client-{i}")
+        assert a.login(f"client-{i}", "admin", "wrong") is None
+    assert a.blocked("anyone-else")
+
+
+def test_failed_logins_expire():
+    a = Auth("admin", password="right")
+    a.fails.extend((time.time() - FAIL_WINDOW_S - 1, "c") for _ in range(MAX_FAILS))
+    assert not a.blocked("c") and not a.fails
+
+
+def test_success_clears_only_that_client():
+    a = Auth("admin", password="right")
+    a.login("c", "admin", "wrong")
+    a.login("d", "admin", "wrong")
+    assert a.login("c", "admin", "right")
+    assert [c for _, c in a.fails] == ["d"]
+
+
+def test_forwarded_header_is_ignored_without_trusted_proxy(anon):
+    for i in range(5):
+        r = anon.post("/login", data={"username": "admin", "password": "wrong"}, headers={"X-Forwarded-For": f"10.0.0.{i}"})
+        assert r.status_code == 401
+    r = anon.post("/login", data={"username": "admin", "password": PW}, headers={"X-Forwarded-For": "10.0.0.99"})
+    assert r.status_code == 429
+
+
+def test_cleanup_runs_at_startup(settings, samples):
+    settings.admin_password = PW
+    a = engine.analyze(samples / "http_scenarios.pcap", settings=settings)
+    meta = a.dir / "meta.json"
+    meta.write_text(json.dumps({**a.meta, "created": 0}))
+    with TestClient(create_app(settings)):
+        for _ in range(100):
+            if not a.dir.exists():
+                break
+            time.sleep(0.02)
+    assert not a.dir.exists()
+
+
+def test_compressed_upload_shows_a_clear_error(client, samples, tmp_path):
+    p = tmp_path / "c.pcap.gz"
+    p.write_bytes(gzip.compress((samples / "http_scenarios.pcap").read_bytes()))
+    assert "Decompress the file" in upload(client, p)
 
 
 def test_cookie_flags_and_logout(anon):

@@ -1,10 +1,13 @@
 """Web interface. Pages use HTMX; tables and charts load JSON from /api."""
+import contextlib
 import datetime
 import ipaddress
+import logging
 import os
 import re
 import shutil
 import tempfile
+import threading
 from pathlib import Path
 
 from fastapi import FastAPI, Form, HTTPException, Request, UploadFile
@@ -24,6 +27,7 @@ OPEN_PATHS = ("/login", "/healthz", "/static/")
 CHUNK = 1 << 20
 FORM_OVERHEAD = 2 * CHUNK  # key files and form fields on top of the capture
 KEY_LIMIT = CHUNK
+PURGE_INTERVAL_S = 3600
 TABS = {"overview": "Overview", "issues": "Issues", "urls": "URLs", "connections": "Connections", "hosts": "Hosts"}
 CSP = ("default-src 'self'; img-src 'self' data:; font-src 'self' data:; style-src 'self' 'unsafe-inline'; object-src 'none'; "
        "base-uri 'none'; frame-ancestors 'none'; form-action 'self'")
@@ -102,11 +106,30 @@ async def _save(upload, path, limit, label):
     return written
 
 
+def _purge_loop(settings, stop):
+    """Enforce retention even when nobody uses the app. Runs at startup, then every hour."""
+    while True:
+        try:
+            engine.purge(settings)
+        except OSError:
+            logging.exception("Cleanup failed, trying again at the next interval")
+        if stop.wait(PURGE_INTERVAL_S):
+            return
+
+
 def create_app(settings=None, secure_cookie=False):
     settings = settings or Settings()
     auth = Auth(settings.admin_user, settings.admin_password, settings.admin_password_hash)
     jobs = Jobs(settings)
-    app = FastAPI(title="pcap-analyzer", version=__version__, docs_url=None, redoc_url=None, openapi_url=None)
+
+    @contextlib.asynccontextmanager
+    async def lifespan(_app):
+        stop = threading.Event()
+        threading.Thread(target=_purge_loop, args=(settings, stop), daemon=True, name="purge").start()
+        yield
+        stop.set()
+
+    app = FastAPI(title="pcap-analyzer", version=__version__, docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan)
     app.mount("/static", StaticFiles(directory=HERE / "static"), name="static")
     templates = Jinja2Templates(directory=HERE / "templates")
     templates.env.filters.update(seconds=seconds, size=size, when=when)

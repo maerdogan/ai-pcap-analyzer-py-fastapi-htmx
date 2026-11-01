@@ -1,4 +1,7 @@
+import gzip
+import os
 import shutil
+import time
 
 import pytest
 
@@ -226,11 +229,11 @@ def test_no_key_left_behind(samples, settings):
     assert not list(__import__("pathlib").Path("/tmp").glob("pcap-analyzer-*"))
 
 
-def test_list_delete_purge(samples, settings):
+def test_list_delete_purge(samples, settings, tmp_path):
     a = engine.analyze(samples / "http_scenarios.pcap", settings=settings)
     assert [m["id"] for m in engine.list_analyses(settings)] == [a.id]
-    assert engine.purge(settings, now=a.meta["created"] + 86400) == 0
-    assert engine.purge(settings, now=a.meta["created"] + 8 * 86400) == 1
+    assert engine.purge(settings, now=a.meta["created"] + 86400, tmp_root=tmp_path) == 0
+    assert engine.purge(settings, now=a.meta["created"] + 8 * 86400, tmp_root=tmp_path) == 1
     assert engine.list_analyses(settings) == []
     assert engine.delete("missing", settings) is False
 
@@ -318,3 +321,34 @@ def test_masking():
 def test_secrets_are_not_stored(samples, settings, tmp_path):
     a = engine.analyze(samples / "https_tls13.pcap", keylog=samples / "https_tls13.keylog", settings=settings)
     assert all("sample-gen" in t["req_headers"] for t in txns(a))
+
+
+@pytest.mark.parametrize("magic", [b"\x1f\x8b\x08\x00", b"\x28\xb5\x2f\xfd", b"\x04\x22\x4d\x18"])
+def test_compressed_capture_is_refused(settings, tmp_path, magic):
+    p = tmp_path / "c.pcap"
+    p.write_bytes(magic + b"data")
+    with pytest.raises(engine.CompressedCapture, match="Decompress"):
+        engine.analyze(p, settings=settings)
+
+
+def test_real_gzip_is_refused(samples, settings, tmp_path):
+    p = tmp_path / "c.pcap.gz"
+    p.write_bytes(gzip.compress((samples / "http_scenarios.pcap").read_bytes()))
+    with pytest.raises(engine.CompressedCapture):
+        engine.analyze(p, settings=settings)
+
+
+def test_purge_removes_stale_temp_files_only(settings, tmp_path):
+    root = tmp_path / "tmp"
+    stale = [root / "pcap-upload-a", root / "pcap-analyzer-b", root / "pcap-export-c", settings.workdir / ".tmp-d"]
+    fresh = root / "pcap-upload-new"
+    other = root / "someone-else"
+    for d in stale + [fresh, other]:
+        d.mkdir(parents=True)
+        (d / "keylog").write_text("secret")
+    old = time.time() - 7 * 3600
+    for d in stale + [other]:
+        os.utime(d, (old, old))
+    engine.purge(settings, tmp_root=root)
+    assert not any(d.exists() for d in stale)
+    assert fresh.exists() and other.exists()

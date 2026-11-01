@@ -43,7 +43,6 @@ class Jobs:
     def _run(self, job, tmpdir, capture, keylog, rsa_key, flt):
         job.state = "running"
         try:
-            engine.purge(self.settings)
             a = engine.analyze(capture, keylog, rsa_key, flt, self.settings, display_name=job.filename)
             job.analysis_id = a.id
             job.state = "done"

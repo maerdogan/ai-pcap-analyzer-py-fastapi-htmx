@@ -32,5 +32,8 @@ All changes made on the same day are one minor version.
 - Two identical analyses running together no longer collide.
 - Table icons no longer break under the content security policy.
 - The server now refuses to start with an invalid password hash, instead of starting with a login that can never succeed.
+- A fake `X-Forwarded-For` header can no longer avoid the login lockout. Forwarded headers are believed only from `PCAP_ANALYZER_TRUSTED_PROXIES`, and all addresses share a limit of 30 failed logins in 5 minutes.
+- Compressed captures are refused, because they could unpack past the size limit.
+- Expired results are now removed every hour, even when nobody uses the app. Leftover temporary files that can hold captures or TLS keys are removed too.
 - Sample generator: the TLS client now verifies the test certificate.
 - Sample generator: the high-latency scenario now acknowledges data at the real round-trip time.

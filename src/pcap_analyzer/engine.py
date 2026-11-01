@@ -14,6 +14,9 @@ from .parser import Builder, finish_stream
 
 
 DNS_WINDOW_S = 5.0
+COMPRESSED_MAGIC = (b"\x1f\x8b", b"\x28\xb5\x2f\xfd", b"\x04\x22\x4d\x18")  # gzip, zstd, lz4
+STALE_TMP_S = 6 * 3600
+TMP_PREFIXES = ("pcap-analyzer-", "pcap-upload-", "pcap-export-")
 
 
 class CaptureTooLarge(Exception):
@@ -21,6 +24,10 @@ class CaptureTooLarge(Exception):
 
 
 class NotFound(Exception):
+    pass
+
+
+class CompressedCapture(ValueError):
     pass
 
 
@@ -37,6 +44,15 @@ class Analysis:
 
     def connect(self):
         return store.connect(self.db_path)
+
+
+def _refuse_compressed(path):
+    """tshark would unpack these, and the unpacked size cannot be known or limited beforehand."""
+    with open(path, "rb") as f:
+        head = f.read(4)
+    if head.startswith(COMPRESSED_MAGIC):
+        raise CompressedCapture("Compressed captures are not accepted, because their real size cannot be checked. "
+                                "Decompress the file and upload it again.")
 
 
 def _digest(paths, flt):
@@ -92,6 +108,7 @@ def analyze(path, keylog=None, rsa_key=None, flt=None, settings=None, use_cached
     limit = settings.max_size_mb * 1024 * 1024
     if path.stat().st_size > limit:
         raise CaptureTooLarge(f"{path.name} is larger than the {settings.max_size_mb} MB limit")
+    _refuse_compressed(path)
     ts_version = tshark.version(settings.tshark)
     aid = _digest([path, keylog, rsa_key], flt)
     out = settings.workdir / aid
@@ -162,11 +179,25 @@ def delete(aid, settings=None):
     return True
 
 
-def purge(settings=None, now=None):
-    """Delete analyses older than the configured TTL and return how many were removed."""
+def _remove_stale(paths, cutoff):
+    for p in paths:
+        try:
+            if p.is_dir() and p.stat().st_mtime < cutoff:
+                shutil.rmtree(p, ignore_errors=True)
+        except OSError:
+            continue  # another process removed it, or it belongs to another user
+
+
+def purge(settings=None, now=None, tmp_root=Path("/tmp")):
+    """Delete expired analyses and what a killed process left behind, and return how many analyses were removed."""
     settings = settings or Settings()
     now = now or time.time()
     old = [m["id"] for m in list_analyses(settings) if now - m["created"] > settings.ttl_days * 86400]
     for aid in old:
         delete(aid, settings)
+    cutoff = now - STALE_TMP_S
+    if settings.workdir.exists():
+        _remove_stale(settings.workdir.glob(".tmp-*"), cutoff)
+    if tmp_root.exists():  # these can hold captures and TLS keys
+        _remove_stale((p for p in tmp_root.iterdir() if p.name.startswith(TMP_PREFIXES)), cutoff)
     return len(old)
