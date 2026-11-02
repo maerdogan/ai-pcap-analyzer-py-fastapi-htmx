@@ -21,7 +21,11 @@ ingress:
   enabled: false
   className: nginx
   host: pcap.example.internal
-  tlsSecret: pcap-analyzer-tls
+  tlsSecret: pcap-analyzer-tls # leave empty for plain HTTP, for tests only
+  # Uploads need 110 MB. These suit ingress-nginx, and other controllers have their own names.
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-body-size: 110m
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "300"
 
 gateway:
   enabled: false

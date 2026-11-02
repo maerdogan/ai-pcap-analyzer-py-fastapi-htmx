@@ -35,7 +35,7 @@ Then create the settings and a password hash:
 ```bash
 cd docker
 cp .env.example .env
-docker run --rm -it pcap-analyzer:0.2.0 pcap-analyzer hash-password
+docker run --rm -it pcap-analyzer:0.3.0 pcap-analyzer hash-password
 ```
 
 Put the hash in `.env` in single quotes, as `PCAP_ANALYZER_ADMIN_PASSWORD_HASH='...'`, and start it:
@@ -53,7 +53,7 @@ Compose limits the app to 2 CPUs, 2 GiB of memory, 256 processes and 1 GiB in `/
 Push the image to your internal registry, then set the image and host names in `kubernetes/generic/`. Create the password hash on any machine with the image:
 
 ```bash
-docker run --rm -it pcap-analyzer:0.2.0 pcap-analyzer hash-password
+docker run --rm -it pcap-analyzer:0.3.0 pcap-analyzer hash-password
 ```
 
 ```bash
@@ -71,6 +71,14 @@ To use it without an Ingress:
 ```bash
 kubectl -n pcap-analyzer port-forward deploy/pcap-analyzer 8000:8000
 ```
+
+With Helm, create the same Secret first, then install the chart. `kubernetes/helm/pcap-analyzer/values.yaml` lists the image, storage, Ingress, Gateway and NetworkPolicy settings:
+
+```bash
+helm install pcap-analyzer kubernetes/helm/pcap-analyzer -n pcap-analyzer --set image.repository=REGISTRY/pcap-analyzer,image.tag=VERSION
+```
+
+In a pod the default seccomp profile refuses namespaces, so tshark runs with Linux Landlock instead, which keeps it away from other analyses. It has no network limit there, and `-n` means it makes no lookups. A kernel without Landlock leaves only the CPU and file size limits.
 
 ## Linux server without sudo
 

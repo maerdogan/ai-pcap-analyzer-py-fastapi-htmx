@@ -3,6 +3,7 @@
 The capture and any TLS key are copied to a private directory under /tmp first, because
 Ubuntu's AppArmor profile stops tshark from reading most other paths.
 """
+import ctypes
 import ipaddress
 import os
 import re
@@ -10,6 +11,7 @@ import resource
 import select
 import shutil
 import subprocess
+import struct
 import tempfile
 import threading
 from dataclasses import dataclass
@@ -17,6 +19,14 @@ from pathlib import Path
 
 MIN_VERSION = (4, 0)
 FILE_LIMIT = 1 << 34  # tshark writes no files here, apart from its temporary reassembly data
+# Linux Landlock works without privileges or namespaces, so it also works in a pod. Numbers are the same on x86_64 and arm64.
+SYS_CREATE_RULESET, SYS_ADD_RULE, SYS_RESTRICT_SELF = 444, 445, 446
+PR_SET_NO_NEW_PRIVS = 38
+RULE_PATH_BENEATH = 1
+FS_ALL = (1 << 13) - 1
+FS_READ = 1 | 1 << 2 | 1 << 3  # run, read files, list folders
+SYSTEM_PATHS = ("/usr", "/lib", "/lib64", "/bin", "/sbin", "/etc", "/proc", "/sys", "/dev")
+_libc = ctypes.CDLL(None, use_errno=True)
 POLL_S = 0.2
 AGG = "\x1f"
 
@@ -185,13 +195,39 @@ def isolated(cmd, folder, workdir):
     return ["unshare", "-Urmn", "sh", "-ec", _ISOLATE, "sh", str(folder), str(workdir), *cmd]
 
 
-def _limits(seconds):
+def _allow(ruleset, path, access):
+    try:
+        fd = os.open(path, os.O_PATH | os.O_CLOEXEC)
+    except OSError:
+        return  # this system has no such folder
+    _libc.syscall(SYS_ADD_RULE, ruleset, RULE_PATH_BENEATH, struct.pack("<Qi", access, fd), 0)
+    os.close(fd)
+
+
+def lock_files(read, write):
+    """Limit this process and its children to these folders. Kernels without Landlock simply skip this."""
+    ruleset = _libc.syscall(SYS_CREATE_RULESET, struct.pack("<Q", FS_ALL), 8, 0)
+    if ruleset < 0:
+        return False
+    for path in read:
+        _allow(ruleset, path, FS_READ)
+    for path in write:
+        _allow(ruleset, path, FS_ALL)
+    _libc.prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0)
+    done = _libc.syscall(SYS_RESTRICT_SELF, ruleset, 0) == 0
+    os.close(ruleset)
+    return done
+
+
+def _limits(seconds, read=(), write=()):
     """Set in the child before tshark starts, so one bad capture cannot take the host down."""
     def apply():
         resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
         resource.setrlimit(resource.RLIMIT_FSIZE, (FILE_LIMIT, FILE_LIMIT))
         if seconds:
             resource.setrlimit(resource.RLIMIT_CPU, (seconds, seconds))
+        if write:
+            lock_files(read, write)
     return apply
 
 
@@ -276,9 +312,15 @@ def packets(path, keylog=None, rsa_key=None, flt=None, binary="tshark", warnings
             try:
                 cmd = _command(binary, capture, kl, rk, expr)
                 found = os.path.realpath(shutil.which(binary) or binary)
-                if workdir and not found.startswith(("/tmp/", str(workdir))) and can_isolate():  # a program kept there would disappear with them
-                    cmd = isolated(cmd, tmp, workdir)
-                proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=errfile, env=env, preexec_fn=_limits(seconds))
+                read, write = (), ()
+                if workdir and not found.startswith(("/tmp/", str(workdir))):  # a program kept there would disappear with them
+                    if can_isolate():
+                        cmd = isolated(cmd, tmp, workdir)
+                    else:
+                        env["TMPDIR"] = tmp
+                        data = os.environ.get("WIRESHARK_DATA_DIR")
+                        read, write = (*SYSTEM_PATHS, os.path.dirname(os.path.dirname(found)), *([data] if data else [])), (tmp,)
+                proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=errfile, env=env, preexec_fn=_limits(seconds, read, write))
             except OSError as e:
                 raise TsharkError(f"tshark could not be started: {e}") from e
             limit.attach(proc)

@@ -390,3 +390,40 @@ def test_sandbox_hides_other_analyses(tmp_path):
         (pathlib.Path(own) / "mine").write_text("y")
         out = subprocess.run(tshark.isolated(["sh", "-c", f"ls {own}; ls {work} 2>&1"], own, work), capture_output=True, text=True)
     assert "mine" in out.stdout and "secret" not in out.stdout
+
+
+def test_file_lock_keeps_other_analyses_away(tmp_path):
+    import os
+    import pathlib
+    import subprocess
+    import sys
+    import pytest
+    from pcap_analyzer import tshark
+    own, other = tmp_path / "own", tmp_path / "work"
+    own.mkdir()
+    other.mkdir()
+    (own / "mine").write_text("y")
+    (other / "secret").write_text("x")
+    script = f"""
+import sys
+sys.path.insert(0, {str(pathlib.Path(tshark.__file__).parent.parent)!r})
+from pcap_analyzer import tshark
+if not tshark.lock_files((*tshark.SYSTEM_PATHS, {sys.prefix!r}, {os.path.realpath(sys.base_prefix)!r}), ({str(own)!r},)):
+    print("unsupported"); raise SystemExit
+print(open({str(own / "mine")!r}).read())
+try:
+    open({str(other / "secret")!r})
+    print("OPENED")
+except PermissionError:
+    print("refused")
+"""
+    out = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True).stdout
+    if "unsupported" in out:
+        pytest.skip("this kernel has no Landlock")
+    assert "y" in out and "refused" in out and "OPENED" not in out
+
+
+def test_tshark_runs_under_the_file_lock(settings, samples, monkeypatch):
+    from pcap_analyzer import engine, tshark
+    monkeypatch.setattr(tshark, "_can_isolate", False)
+    assert engine.analyze(samples / "http_scenarios.pcap", settings=settings).meta["transactions"] == 18
