@@ -35,7 +35,7 @@ Then create the settings and a password hash:
 ```bash
 cd docker
 cp .env.example .env
-docker run --rm -it pcap-analyzer:0.3.0 pcap-analyzer hash-password
+docker run --rm -it pcap-analyzer:0.4.0 pcap-analyzer hash-password
 ```
 
 Put the hash in `.env` in single quotes, as `PCAP_ANALYZER_ADMIN_PASSWORD_HASH='...'`, and start it:
@@ -53,7 +53,7 @@ Compose limits the app to 2 CPUs, 2 GiB of memory, 256 processes and 1 GiB in `/
 Push the image to your internal registry, then set the image and host names in `kubernetes/generic/`. Create the password hash on any machine with the image:
 
 ```bash
-docker run --rm -it pcap-analyzer:0.3.0 pcap-analyzer hash-password
+docker run --rm -it pcap-analyzer:0.4.0 pcap-analyzer hash-password
 ```
 
 ```bash

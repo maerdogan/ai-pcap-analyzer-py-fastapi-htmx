@@ -24,7 +24,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: pcap-analyzer
-          image: registry.example.internal/pcap-analyzer:0.3.0 # your internal registry
+          image: registry.example.internal/pcap-analyzer:0.4.0 # your internal registry
           ports:
             - containerPort: 8000
           env:

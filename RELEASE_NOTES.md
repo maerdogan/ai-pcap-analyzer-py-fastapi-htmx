@@ -2,7 +2,7 @@
 
 All changes made on the same day are one minor version.
 
-## 0.3.0 (2026-11-03)
+## 0.4.0 (2026-11-03)
 
 ### Added
 
