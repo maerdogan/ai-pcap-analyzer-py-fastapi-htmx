@@ -1,0 +1,43 @@
+name: Release
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    uses: ./.github/workflows/test.yml
+
+  release:
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      IMAGE: ghcr.io/${{ github.repository }}
+      TAG: ${{ github.ref_name }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Check the tag and read its notes
+        run: python3 tools/release.py "$TAG" > notes.md
+      - name: Build the image
+        run: docker build -f docker/Containerfile -t "pcap-analyzer:${TAG#v}" -t "$IMAGE:${TAG#v}" -t "$IMAGE:latest" .
+      - name: Prepare the release files
+        run: |
+          mkdir dist
+          docker save "pcap-analyzer:${TAG#v}" | gzip > "dist/pcap-analyzer-${TAG#v}-image-amd64.tar.gz"
+          python3 -m pip wheel --no-deps . -w dist
+          (cd dist && sha256sum -- * > SHA256SUMS)
+      - name: Publish the image
+        run: |
+          echo "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          docker push "$IMAGE:${TAG#v}"
+          docker push "$IMAGE:latest"
+      - name: Publish the release
+        run: gh release create "$TAG" dist/* --title "$TAG" --notes-file notes.md

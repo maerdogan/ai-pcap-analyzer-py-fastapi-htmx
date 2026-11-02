@@ -1,36 +1,45 @@
-{% import "_macros.html" as ui %}
-{% for w in m.warnings %}<p class="warn">{{ warning_text[w] }}</p>{% endfor %}
-{% if o.http.requests %}{{ ui.stats(o.http) }}{% endif %}
-<section class="panel">
-  <h2>Where the time went</h2>
-  {% if budget %}
-  <div class="budget">{{ ui.strip(budget) }}</div>
-  {{ ui.breakdown(budget) }}
-  <p class="hint">{{ o.http.requests }} requests over {{ o.tcp.connections }} connections{% if m.capture_end %}, spanning {{ (m.capture_end - m.capture_start) | seconds }}{% endif %}.</p>
-  {% else %}
-  <p>No HTTP requests were found, so only TCP data is available. If the traffic is HTTPS, analyze it again with a key log.</p>
-  {% endif %}
-</section>
-{% if o.http.requests %}
-<section class="panel flush">
-  <h2>Slowest requests</h2>
-  {{ ui.waterfall(slow, a) }}
-</section>
-<section class="charts">
-  <div class="panel"><h2>Response time spread</h2><div class="chart" data-chart="histogram" data-src="/api/a/{{ a.id }}/histogram" data-name="response-times"></div></div>
-  <div class="panel"><h2>Status codes</h2><div class="chart" data-chart="statuses" data-src="/api/a/{{ a.id }}/statuses" data-name="status-codes"></div></div>
-</section>
-{% endif %}
-<section class="panel">
-  <h2>TCP</h2>
-  <dl class="facts">
-    <div><dt>Connections</dt><dd>{{ o.tcp.connections }}</dd></div>
-    <div><dt>Handshakes seen</dt><dd>{{ o.tcp.handshakes }}</dd></div>
-    <div><dt>Resets</dt><dd>{{ o.tcp.resets }}</dd></div>
-    <div><dt>Retransmissions</dt><dd>{{ o.tcp.retransmissions or 0 }}</dd></div>
-    <div><dt>Average connect</dt><dd>{{ o.tcp.avg_connect | seconds }}</dd></div>
-    <div><dt>Average round trip</dt><dd>{{ o.tcp.avg_rtt_server | seconds }}</dd></div>
-    <div><dt>Traffic types</dt><dd>{% for k in o.kinds %}{{ k.kind }} ({{ k.connections }}){% if not loop.last %}, {% endif %}{% endfor %}</dd></div>
-    <div><dt>Capture point</dt><dd>{% for c in o.capture_points %}{{ c.capture_point | replace("_", " ") | capitalize }} ({{ c.connections }}){% if not loop.last %}, {% endif %}{% endfor %}</dd></div>
-  </dl>
-</section>
+{% import "_macros.html" as ui with context %}
+{{ ui.quality(quality) }}
+{% for w in m.warnings %}<p class="warn">{{ warning_text()[w] }}</p>{% endfor %}
+<div class="columns">
+  <div class="stack">
+    {% if o.http.requests %}
+    <section class="panel">
+      <h2>{{ _("Traffic over time") }}</h2>
+      <div class="chart tall" data-chart="timeline" data-src="/api/a/{{ a.id }}/timeline" data-name="timeline" data-base="/a/{{ a.id }}"></div>
+      <p class="hint">{{ _("Drag on the chart to choose a period, then inspect the requests in it.") }}</p>
+    </section>
+    <section class="panel flush">
+      <h2>{{ _("Slowest requests") }}</h2>
+      {{ ui.waterfall(slow, a) }}
+    </section>
+    <section class="panel"><h2>{{ _("Response time spread") }}</h2><div class="chart" data-chart="histogram" data-src="/api/a/{{ a.id }}/histogram" data-name="response-times"></div></section>
+    {% endif %}
+  </div>
+  <div class="stack">
+    <section class="panel">
+      <h2>{{ _("Where the time went") }}</h2>
+      {% if budget %}
+      <div class="budget">{{ ui.strip(budget) }}</div>
+      {{ ui.breakdown(budget) }}
+      <p class="hint">{% if m.capture_end %}{{ _("{requests} requests over {connections} connections, spanning {time}.", requests=o.http.requests, connections=o.tcp.connections, time=(m.capture_end - m.capture_start) | seconds) }}{% else %}{{ _("{requests} requests over {connections} connections.", requests=o.http.requests, connections=o.tcp.connections) }}{% endif %}</p>
+      {% else %}
+      <p>{{ _("No HTTP requests were found, so only TCP data is available. If the traffic is HTTPS, analyze it again with a key log.") }}</p>
+      {% endif %}
+    </section>
+    {% if o.http.requests %}<section class="panel"><h2>{{ _("Status codes") }}</h2><div class="chart" data-chart="statuses" data-src="/api/a/{{ a.id }}/statuses" data-name="status-codes"></div></section>{% endif %}
+    <section class="panel">
+      <h2>{{ _("TCP") }}</h2>
+      <dl class="facts">
+        <div><dt>{{ _("Connections") }}</dt><dd>{{ o.tcp.connections }}</dd></div>
+        <div><dt>{{ _("Handshakes seen") }}</dt><dd>{{ o.tcp.handshakes }}</dd></div>
+        <div><dt>{{ _("Resets") }}</dt><dd>{{ o.tcp.resets }}</dd></div>
+        <div><dt>{{ _("Retransmissions") }}</dt><dd>{{ o.tcp.retransmissions or 0 }}</dd></div>
+        <div><dt>{{ _("Average connect") }}</dt><dd>{{ o.tcp.avg_connect | seconds }}</dd></div>
+        <div><dt>{{ _("Average round trip") }}</dt><dd>{{ o.tcp.avg_rtt_server | seconds }}</dd></div>
+        <div><dt>{{ _("Traffic types") }}</dt><dd>{% for k in o.kinds %}{{ k.kind }} ({{ k.connections }}){% if not loop.last %}, {% endif %}{% endfor %}</dd></div>
+        <div><dt>{{ _("Capture point") }}</dt><dd>{% for c in o.capture_points %}{{ _(c.capture_point | replace("_", " ") | capitalize) }} ({{ c.connections }}){% if not loop.last %}, {% endif %}{% endfor %}</dd></div>
+      </dl>
+    </section>
+  </div>
+</div>

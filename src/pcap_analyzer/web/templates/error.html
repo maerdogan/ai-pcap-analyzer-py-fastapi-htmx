@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% block main %}
-<header class="page-head"><div><h1>This page cannot be shown</h1></div></header>
+<header class="page-head"><div><h1>{{ _("This page cannot be shown") }}</h1></div></header>
 <p class="error" role="alert">{{ message }}</p>
-<p><a href="/">Go to your captures</a></p>
+<p><a href="/">{{ _("Go to your captures") }}</a></p>
 {% endblock %}

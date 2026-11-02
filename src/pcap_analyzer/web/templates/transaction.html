@@ -1,47 +1,55 @@
 {% extends "base.html" %}
-{% import "_macros.html" as ui %}
+{% import "_macros.html" as ui with context %}
 {% block title %}{{ t.method }} {{ t.uri }}{% endblock %}
 {% block capture_nav %}{{ ui.capnav(a, "connections", issue_count) }}{% endblock %}
 {% block main %}
-<p class="back"><a href="/a/{{ a.id }}/conn/{{ t.stream }}">Connection {{ t.conn.client_ip }}:{{ t.conn.client_port }}</a></p>
-<header class="page-head"><div>
-  <h1 class="uri">{{ ui.status(t.status) }} {{ t.method }} {{ t.uri }}</h1>
-  <p><b>{{ t.cause_label }}.</b> {{ t.explanation }}</p>
-</div></header>
+{{ ui.crumbs([(_("Captures"), "/"), (m.filename, "/a/" ~ a.id), (_("Connection {n}", n=t.conn.client_ip ~ ":" ~ t.conn.client_port), "/a/" ~ a.id ~ "/conn/" ~ t.stream), (t.method ~ " " ~ (t.uri | truncate(48, True, "…")), None)]) }}
+<header class="hero">
+  <div class="hero-head"><div>
+    <h1 class="uri">{{ t.method }} {{ t.uri }}</h1>
+    <p><b>{{ t.cause_label }}.</b> {{ t.explanation }}</p>
+  </div></div>
+  <div class="score ends">
+    <div class="score-side"><small>{{ _("Client") }}</small><b>{{ t.conn.client_ip }}:{{ t.conn.client_port }}</b></div>
+    <div class="score-mid">{{ ui.status(t.status) }}<strong>{{ t.total | seconds }}</strong></div>
+    <div class="score-side"><small>{{ _("Server") }}</small><b>{{ t.conn.server_ip }}:{{ t.conn.server_port }}</b></div>
+  </div>
+</header>
+{% if t.guide %}{{ ui.guide(t.guide) }}{% endif %}
 {% if t.phases %}
 <section class="panel">
-  <h2>Time breakdown</h2>
+  <h2>{{ _("Time breakdown") }}</h2>
   <div class="budget">{{ ui.strip(t.phases) }}</div>
   {{ ui.breakdown(t.phases) }}
 </section>
 {% endif %}
 <section class="panel">
-  <h2>Details</h2>
+  <h2>{{ _("Details") }}</h2>
   <dl class="facts">
-    <div><dt>Status</dt><dd>{{ t.status or "No reply" }}{% if t.phrase %} {{ t.phrase }}{% endif %}</dd></div>
-    <div><dt>Protocol</dt><dd>{{ t.http_version }}</dd></div>
-    <div><dt>Total</dt><dd>{{ t.total | seconds }}</dd></div>
-    <div><dt>First byte</dt><dd>{{ t.ttfb | seconds }}</dd></div>
-    <div><dt>Server wait</dt><dd>{{ t.wait | seconds }}</dd></div>
-    <div><dt>Transfer</dt><dd>{{ t.transfer | seconds }}</dd></div>
-    <div><dt>Connection</dt><dd>{{ "New" if t.new_conn else "Reused" }}, request {{ t.seq_on_conn }}</dd></div>
-    <div><dt>Sent</dt><dd>{{ t.req_bytes | size }}</dd></div>
-    <div><dt>Received</dt><dd>{{ t.resp_bytes | size }}</dd></div>
-    {% if t.dns_time is not none %}<div><dt>DNS lookup</dt><dd>{{ t.dns_time | seconds }}</dd></div>{% endif %}
-    {% if t.server_reported is not none %}<div><dt>Server reported</dt><dd>{{ t.server_reported | seconds }}</dd></div>{% endif %}
-    {% if t.content_encoding %}<div><dt>Compression</dt><dd>{{ t.content_encoding }}</dd></div>{% endif %}
-    {% if t.transfer_encoding %}<div><dt>Transfer encoding</dt><dd>{{ t.transfer_encoding }}</dd></div>{% endif %}
-    {% if t.x_forwarded_for %}<div><dt>Original client</dt><dd>{{ t.x_forwarded_for }}</dd></div>{% endif %}
-    {% if t.request_id %}<div><dt>Request ID</dt><dd>{{ t.request_id }}</dd></div>{% endif %}
-    <div><dt>Packets</dt><dd>{{ t.req_frame }} to {{ t.resp_frame or t.req_frame }}</dd></div>
+    <div><dt>{{ _("Status") }}</dt><dd>{{ t.status or _("No reply") }}{% if t.phrase %} {{ t.phrase }}{% endif %}</dd></div>
+    <div><dt>{{ _("Protocol") }}</dt><dd>{{ t.http_version }}</dd></div>
+    <div><dt>{{ _("Total") }}</dt><dd>{{ t.total | seconds }}</dd></div>
+    <div><dt>{{ _("First byte") }}</dt><dd>{{ t.ttfb | seconds }}</dd></div>
+    <div><dt>{{ _("Server wait") }}</dt><dd>{{ t.wait | seconds }}</dd></div>
+    <div><dt>{{ _("Transfer") }}</dt><dd>{{ t.transfer | seconds }}</dd></div>
+    <div><dt>{{ _("Connection") }}</dt><dd>{{ _("New, request {n}", n=t.seq_on_conn) if t.new_conn else _("Reused, request {n}", n=t.seq_on_conn) }}</dd></div>
+    <div><dt>{{ _("Sent") }}</dt><dd>{{ t.req_bytes | size }}</dd></div>
+    <div><dt>{{ _("Received") }}</dt><dd>{{ t.resp_bytes | size }}</dd></div>
+    {% if t.dns_time is not none %}<div><dt>{{ _("DNS lookup") }}</dt><dd>{{ t.dns_time | seconds }}</dd></div>{% endif %}
+    {% if t.server_reported is not none %}<div><dt>{{ _("Server reported") }}</dt><dd>{{ t.server_reported | seconds }}</dd></div>{% endif %}
+    {% if t.content_encoding %}<div><dt>{{ _("Compression") }}</dt><dd>{{ t.content_encoding }}</dd></div>{% endif %}
+    {% if t.transfer_encoding %}<div><dt>{{ _("Transfer encoding") }}</dt><dd>{{ t.transfer_encoding }}</dd></div>{% endif %}
+    {% if t.x_forwarded_for %}<div><dt>{{ _("Original client") }}</dt><dd>{{ t.x_forwarded_for }}</dd></div>{% endif %}
+    {% if t.request_id %}<div><dt>{{ _("Request ID") }}</dt><dd>{{ t.request_id }}</dd></div>{% endif %}
+    <div><dt>{{ _("Packets") }}</dt><dd>{{ t.req_frame }}–{{ t.resp_frame or t.req_frame }}</dd></div>
   </dl>
 </section>
 <section class="panel">
-  <h2>Content</h2>
-  <p class="hint">Cookies, tokens and passwords are masked. Bodies show the first 2 KB when they are text.</p>
+  <h2>{{ _("Content") }}</h2>
+  <p class="hint">{{ _("Cookies, tokens and passwords are masked. Bodies show the first 2 KB when they are text.") }}</p>
   <div class="two">
-    <div><h3>Request</h3><pre>{{ t.req_headers or "Not available" }}</pre>{% if t.req_body %}<pre>{{ t.req_body }}</pre>{% endif %}</div>
-    <div><h3>Response</h3><pre>{{ t.resp_headers or "Not available" }}</pre>{% if t.resp_body %}<pre>{{ t.resp_body }}</pre>{% endif %}</div>
+    <div><h3>{{ _("Request") }}</h3><pre>{{ t.req_headers or _("Not available") }}</pre>{% if t.req_body %}<pre>{{ t.req_body }}</pre>{% endif %}</div>
+    <div><h3>{{ _("Response") }}</h3><pre>{{ t.resp_headers or _("Not available") }}</pre>{% if t.resp_body %}<pre>{{ t.resp_body }}</pre>{% endif %}</div>
   </div>
 </section>
 {% endblock %}

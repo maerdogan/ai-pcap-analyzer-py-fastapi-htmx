@@ -1,27 +1,32 @@
 {% extends "base.html" %}
-{% import "_macros.html" as ui %}
-{% block title %}Inspect traffic{% endblock %}
+{% import "_macros.html" as ui with context %}
+{% block title %}{{ _("Inspect traffic") }}{% endblock %}
 {% block capture_nav %}{{ ui.capnav(a, "inspect", issue_count) }}{% endblock %}
 {% block main %}
-<header class="page-head"><div><h1>Inspect traffic</h1><p class="muted">Focus on one source, destination or URL in {{ m.filename }}.</p></div></header>
+{{ ui.crumbs([(_("Captures"), "/"), (m.filename, "/a/" ~ a.id), (_("Inspect traffic"), None)]) }}
+<header class="page-head"><div><h1>{{ _("Inspect traffic") }}</h1><p class="muted">{{ _("Focus on one source, destination or URL in {name}.", name=m.filename) }}</p></div></header>
 <section class="panel">
 <form id="f" hx-get="/a/{{ a.id }}/inspect" hx-target="#results" hx-push-url="true" hx-trigger="submit">
   <div class="fields">
-    <label>Source IP <input name="src" list="srcs" value="{{ q.src or '' }}" placeholder="100.10.10.101"></label>
-    <label>Destination IP <input name="dst" list="dsts" value="{{ q.dst or '' }}" placeholder="100.10.100.101"></label>
-    <label>Destination port <input name="port" inputmode="numeric" value="{{ q.port or '' }}" placeholder="8080"></label>
-    <label>Connection type
-      <select name="kind"><option value="">All</option>{% for k in kinds %}<option {% if q.kind == k %}selected{% endif %}>{{ k }}</option>{% endfor %}</select>
+    <label>{{ _("Source IP") }} <input name="src" list="srcs" value="{{ q.src or '' }}" placeholder="100.10.10.101"></label>
+    <label>{{ _("Destination IP") }} <input name="dst" list="dsts" value="{{ q.dst or '' }}" placeholder="100.10.100.101"></label>
+    <label>{{ _("Destination port") }} <input name="port" inputmode="numeric" value="{{ q.port or '' }}" placeholder="8080"></label>
+    <label>{{ _("Connection type") }}
+      <select name="kind"><option value="">{{ _("All") }}</option>{% for k in kinds %}<option {% if q.kind == k %}selected{% endif %}>{{ k }}</option>{% endfor %}</select>
     </label>
-    <label>URL contains <input name="url" value="{{ q.url or '' }}" placeholder="/api/orders"></label>
-    <label>Larger than (bytes) <input name="min_size" inputmode="numeric" value="{{ q.min_size or '' }}"></label>
-    <label>Size of
-      <select name="size_of">{% for k, l in [("total", "Request and response"), ("request", "Request"), ("response", "Response"), ("packet", "Largest packet")] %}<option value="{{ k }}" {% if q.size_of == k %}selected{% endif %}>{{ l }}</option>{% endfor %}</select>
+    <label>{{ _("URL contains") }} <input name="url" value="{{ q.url or '' }}" placeholder="/api/orders"></label>
+    <label>{{ _("Larger than (bytes)") }} <input name="min_size" inputmode="numeric" value="{{ q.min_size or '' }}"></label>
+    <label>{{ _("Size of") }}
+      <select name="size_of">{% for k, l in [("total", _("Request and response")), ("request", _("Request")), ("response", _("Response")), ("packet", _("Largest packet"))] %}<option value="{{ k }}" {% if q.size_of == k %}selected{% endif %}>{{ l }}</option>{% endfor %}</select>
     </label>
   </div>
+  {% if q.start or q.end %}
+  <input type="hidden" name="start" value="{{ q.start or '' }}"><input type="hidden" name="end" value="{{ q.end or '' }}">
+  <p class="hint">{{ _("Only requests from {start} to {end}.", start=(q.start | float | when), end=(q.end | float | when)) }} <a href="/a/{{ a.id }}/inspect">{{ _("Show the whole capture") }}</a></p>
+  {% endif %}
   <datalist id="srcs">{% for s in pairs | map(attribute="client_ip") | unique %}<option>{{ s }}</option>{% endfor %}</datalist>
   <datalist id="dsts">{% for s in pairs | map(attribute="server_ip") | unique %}<option>{{ s }}</option>{% endfor %}</datalist>
-  <button class="primary">Inspect</button>
+  <button class="primary">{{ _("Inspect") }}</button>
 </form>
 <div class="filter-row">
   {% if filters %}
@@ -29,20 +34,21 @@
     {% for f in filters %}
     <li>
       <a href="/a/{{ a.id }}/inspect?{% for k in ('src','dst','port','kind','url','min_size','size_of') %}{% if f[k] %}{{ k }}={{ f[k] | urlencode }}&amp;{% endif %}{% endfor %}">{{ f.name }}</a>
-      <form method="post" action="/filters/{{ f.id }}/delete"><input type="hidden" name="back" value="/a/{{ a.id }}/inspect"><button class="link danger" aria-label="Delete filter {{ f.name }}">Delete</button></form>
+      <form method="post" action="/filters/{{ f.id }}/delete"><input type="hidden" name="csrf_token" value="{{ form_token() }}"><input type="hidden" name="back" value="/a/{{ a.id }}/inspect"><button class="link danger" aria-label="{{ _("Delete filter {name}", name=f.name) }}">{{ _("Delete") }}</button></form>
     </li>
     {% endfor %}
   </ul>
   {% endif %}
   <details class="save">
-    <summary>Save this filter</summary>
+    <summary>{{ _("Save this filter") }}</summary>
     <form method="post" action="/filters" class="inline">
+      <input type="hidden" name="csrf_token" value="{{ form_token() }}">
       <input type="hidden" name="back" value="/a/{{ a.id }}/inspect">
       {% for k in ('src','dst','port','kind','url','min_size','size_of') %}<input type="hidden" name="{{ k }}" value="{{ q[k] or '' }}">{% endfor %}
-      <label>Name <input name="name" required maxlength="80"></label>
-      <button>Save filter</button>
+      <label>{{ _("Name") }} <input name="name" required maxlength="80"></label>
+      <button>{{ _("Save filter") }}</button>
     </form>
-    <p class="hint">Saves the filter as it was last applied.</p>
+    <p class="hint">{{ _("Saves the filter as it was last applied.") }}</p>
   </details>
 </div>
 </section>

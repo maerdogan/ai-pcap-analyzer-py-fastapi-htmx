@@ -1,0 +1,516 @@
+{
+  "normal": {
+    "label": {"en": "Normal", "tr": "Normal"},
+    "summary": [{"en": "No delay stands out.", "tr": "Öne çıkan bir gecikme yok."}]
+  },
+  "service": {
+    "label": {"en": "Slow service", "tr": "Yavaş servis"},
+    "summary": [
+      {"when": [["capture_point", "==", "near_server"]],
+       "en": "The server spent {service:time} ({pct}%) before its first byte. The network is not the reason.",
+       "tr": "Sunucu ilk bayttan önce {service:time} (%{pct}) harcadı. Sebep ağ değil."},
+      {"en": "The server side spent {service:time} ({pct}%) before the first byte. This includes everything behind the capture point.",
+       "tr": "Sunucu tarafı ilk bayttan önce {service:time} (%{pct}) harcadı. Bu süre capture noktasının arkasındaki her şeyi kapsar."}
+    ],
+    "meaning": {"en": "This is the time between the last request byte and the first response byte, minus one network round trip and any queue wait. Nothing moved on the wire during it, so the delay is inside whatever answers at the far end of the capture point.",
+      "tr": "Bu süre, isteğin son baytı ile cevabın ilk baytı arasındaki süreden bir ağ gidiş dönüşü ve kuyruk beklemesi çıkarılarak bulunur. Bu sırada hatta veri akmadığı için gecikme, capture noktasının ötesinde cevap veren tarafın içindedir."},
+    "evidence": [
+      {"when": [["capture_point", "==", "near_server"]],
+       "en": "The capture is close to the server, so this time most likely belongs to the application and what it depends on.",
+       "tr": "Capture sunucuya yakın, bu yüzden süre büyük olasılıkla uygulamaya ve bağlı olduğu servislere ait."},
+      {"when": [["capture_point", "in", ["near_client", "middle"]]],
+       "en": "The capture is not next to the server. This time also covers NetScaler, the network behind it and the application. Capture behind NetScaler before blaming the application.",
+       "tr": "Capture sunucunun yanında değil. Bu süreye NetScaler, arkasındaki ağ ve uygulama birlikte dahildir. Uygulamayı suçlamadan önce NetScaler'ın arkasından da capture alın."},
+      {"when": [["reported_gap", ">=", 0.1]],
+       "en": "The server reports {server_reported:time} but {service:time} was measured here. The other {reported_gap:time} passed outside the code that reported the time: a proxy, a connection or thread queue, CPU limits or the path to it.",
+       "tr": "Sunucu {server_reported:time} bildiriyor, burada {service:time} ölçüldü. Aradaki {reported_gap:time} bu süreyi bildiren kodun dışında geçti: proxy, bağlantı veya thread kuyruğu, CPU sınırı ya da oraya giden yol olabilir."},
+      {"when": [["reported_gap", "<", 0.1], ["server_reported", ">=", 0]],
+       "en": "The server's own Server-Timing value agrees with this measurement, so the time was spent inside the part of the application it covers.",
+       "tr": "Sunucunun kendi Server-Timing değeri bu ölçümle uyuşuyor. Süre, bu değerin kapsadığı uygulama kısmında geçmiş."},
+      {"when": [["near_timeout", "==", true]],
+       "en": "The wait is very close to {timeout} seconds. A round number like this usually means a timeout or a retry somewhere, not steady slowness.",
+       "tr": "Bekleme {timeout} saniyeye çok yakın. Böyle yuvarlak bir değer genellikle kalıcı yavaşlıktan çok bir zaman aşımına veya yeniden denemeye işaret eder."}
+    ],
+    "checks": [
+      {"en": "In the URLs tab, see whether one URL or all of them are slow. One URL points to its code or query, all of them point to a shared resource.",
+       "tr": "URLs sekmesinde tek bir URL mi yoksa hepsi mi yavaş bakın. Tek URL kodu veya sorguyu, hepsi ortak bir kaynağı işaret eder."},
+      {"en": "Find this moment in application logs or tracing. Look at database, cache and outside API calls first.",
+       "tr": "Bu anı uygulama loglarında veya trace kayıtlarında bulun. Önce veritabanı, cache ve dış API çağrılarına bakın."},
+      {"en": "In Kubernetes, check `kubectl top pod` and `nr_throttled` in the container's `cpu.stat`. A CPU limit throttles the container and shows up here as service time.",
+       "tr": "Kubernetes'te `kubectl top pod` çıktısına ve container'ın `cpu.stat` dosyasındaki `nr_throttled` değerine bakın. CPU sınırı container'ı yavaşlatır ve burada servis süresi olarak görünür."},
+      {"en": "Check for full worker, thread or database connection pools. A request waiting for one looks exactly like slow code.",
+       "tr": "Worker, thread ve veritabanı bağlantı havuzlarının dolu olup olmadığına bakın. Bunları bekleyen bir istek, yavaş kod ile aynı görünür."},
+      {"en": "Ask the NetScaler team whether the service had a surge queue at that moment. Requests held there wait with no packets on the wire.",
+       "tr": "NetScaler ekibine o anda servisin surge queue durumunu sorun. Orada bekleyen istekler için hatta paket görünmez."}
+    ],
+    "misread": {"en": "Slow service does not prove the application code is slow. A capture sees silence, not what caused it. Compare both sides of NetScaler to tell them apart.",
+      "tr": "Yavaş servis, uygulama kodunun yavaş olduğunu kanıtlamaz. Capture sessizliği görür, sebebini görmez. Ayırt etmek için NetScaler'ın iki tarafını karşılaştırın."},
+    "sources": [["ns_flow", ""], ["ns_surge", ""], ["k8s_resources", "CPU limits"], ["server_timing", ""]]
+  },
+  "network": {
+    "label": {"en": "Network delay", "tr": "Ağ gecikmesi"},
+    "summary": [{"en": "Round-trip time of {network:time} ({pct}%) is the largest part. The server itself answered quickly.",
+      "tr": "En büyük pay {network:time} (%{pct}) gidiş dönüş süresine ait. Sunucunun kendisi hızlı cevap verdi."}],
+    "meaning": {"en": "One round trip from the capture point toward the server took the largest share. The app uses the lowest round trip seen on the connection, so this value is the path's floor and not a short spike.",
+      "tr": "Capture noktasından sunucu yönüne bir gidiş dönüş en büyük payı aldı. Uygulama bağlantıda görülen en düşük gidiş dönüş süresini kullanır. Yani bu değer kısa bir sıçrama değil, yolun alt sınırıdır."},
+    "evidence": [
+      {"when": [["capture_point", "==", "near_client"]],
+       "en": "The capture is close to the client, so the delay lies between here and whatever answers TCP. Behind NetScaler that is the VIP, not the backend server.",
+       "tr": "Capture istemciye yakın, yani gecikme buradan TCP'ye cevap veren noktaya kadarki yolda. NetScaler varsa bu nokta arka sunucu değil VIP'tir."},
+      {"when": [["rtt_client", ">=", 0.1]],
+       "en": "The other direction, toward the client, also shows {rtt_client:time}, so the capture point sits in the middle of a long path.",
+       "tr": "Diğer yön olan istemci tarafında da {rtt_client:time} görülüyor, yani capture noktası uzun bir yolun ortasında."}
+    ],
+    "checks": [
+      {"en": "Run `mtr` or `ping` between the same two points and compare with the usual value.",
+       "tr": "Aynı iki nokta arasında `mtr` veya `ping` çalıştırıp değeri normal zamanla karşılaştırın."},
+      {"en": "Check for a VPN, a tunnel or a route through another site. Round trips that high often mean the traffic travels further than expected.",
+       "tr": "VPN, tünel veya başka lokasyondan geçen bir rota olup olmadığına bakın. Bu kadar yüksek süreler çoğunlukla trafiğin beklenenden uzağa gittiğini gösterir."},
+      {"en": "Check that clients reach the nearest site, including DNS answers.",
+       "tr": "İstemcilerin en yakın lokasyona gittiğini DNS cevapları dahil doğrulayın."},
+      {"en": "Reduce round trips where you cannot shorten the path: reuse connections and TLS sessions.",
+       "tr": "Yol kısaltılamıyorsa gidiş dönüş sayısını azaltın: bağlantıları ve TLS oturumlarını yeniden kullanın."}
+    ],
+    "misread": {"en": "This is one round trip, not the whole network cost. Retransmissions and transfers are counted in their own phases.",
+      "tr": "Bu değer tek bir gidiş dönüştür, ağın toplam maliyeti değildir. Yeniden iletimler ve aktarım kendi aşamalarında sayılır."},
+    "sources": [["wireshark", ""], ["ns_flow", ""]]
+  },
+  "loss": {
+    "label": {"en": "Packet loss", "tr": "Paket kaybı"},
+    "summary": [{"en": "{retrans_count} retransmission(s) cost {retrans_time:time} ({pct}%). Packets were lost or badly delayed.",
+      "tr": "{retrans_count} yeniden iletim {retrans_time:time} (%{pct}) kaybettirdi. Paketler kaybolmuş veya çok gecikmiş."}],
+    "meaning": {"en": "TCP sent the same data again because it decided the first copy did not arrive. The time shown is the wait from the sender's previous data packet to each retransmission.",
+      "tr": "TCP, ilk kopyanın ulaşmadığına karar verdiği için aynı veriyi yeniden gönderdi. Gösterilen süre, gönderenin önceki veri paketinden her yeniden iletime kadar geçen beklemedir."},
+    "evidence": [
+      {"when": [["retrans_gap", ">=", 0.18]],
+       "en": "Each retransmission waited about {retrans_gap:time} on average. That looks like a retransmission timeout. Linux waits at least 200 ms by default, RFC 6298 recommends at least 1 s, and each further timeout doubles the wait.",
+       "tr": "Her yeniden iletim ortalama {retrans_gap:time} bekledi. Bu, yeniden iletim zaman aşımına benziyor. Linux varsayılan olarak en az 200 ms bekler, RFC 6298 en az 1 s önerir ve sonraki her zaman aşımında bekleme iki katına çıkar."},
+      {"when": [["retrans_gap", "<", 0.18], ["retrans_gap", ">", 0]],
+       "en": "Each retransmission waited about {retrans_gap:time} on average. That is short enough for fast retransmit, where duplicate ACKs reveal the gap. The cost is usually more in reduced speed than in this wait.",
+       "tr": "Her yeniden iletim ortalama {retrans_gap:time} bekledi. Bu süre, yinelenen ACK'lerin boşluğu gösterdiği hızlı yeniden iletim için yeterince kısa. Bu durumda asıl maliyet çoğunlukla bu bekleme değil, düşen hızdır."},
+      {"when": [["conn_retransmissions", ">=", 10]],
+       "en": "This connection has {conn_retransmissions} retransmissions in total, so the problem repeats and is not a single event.",
+       "tr": "Bu bağlantıda toplam {conn_retransmissions} yeniden iletim var. Sorun tek seferlik değil, tekrar ediyor."}
+    ],
+    "checks": [
+      {"en": "Capture at a second point. A segment seen at one point and missing at the next shows which part of the path loses it.",
+       "tr": "İkinci bir noktadan capture alın. Bir noktada görülüp sonrakinde görülmeyen segment, kaybın yolun hangi kısmında olduğunu gösterir."},
+      {"en": "On the Linux hosts run `ip -s link show`, `ethtool -S <interface>` and `nstat -az TcpRetransSegs`.",
+       "tr": "Linux makinelerde `ip -s link show`, `ethtool -S <arayüz>` ve `nstat -az TcpRetransSegs` komutlarını çalıştırın."},
+      {"en": "See whether the loss hits only large packets. If so, look at MTU on tunnels and overlay networks.",
+       "tr": "Kaybın yalnız büyük paketlerde olup olmadığına bakın. Öyleyse tünel ve overlay ağlardaki MTU değerlerini kontrol edin."},
+      {"en": "Look for traffic limits on the path: policers, QoS rules and full queues during peaks.",
+       "tr": "Yoldaki trafik sınırlarına bakın: policer, QoS kuralları ve yoğun saatlerde dolan kuyruklar."}
+    ],
+    "misread": {"en": "A retransmission is not always a lost packet. A long delay can trigger one too, and Wireshark marks the unnecessary ones as spurious. The first copy passed the capture point, so real loss is usually between the capture point and the receiver.",
+      "tr": "Her yeniden iletim paket kaybı demek değildir. Uzun bir gecikme de yeniden iletime yol açabilir, Wireshark gereksiz olanları spurious diye işaretler. İlk kopya capture noktasından geçtiği için gerçek kayıp genellikle capture noktası ile alıcı arasındadır."},
+    "sources": [["rfc6298", "2.4, 5.5"], ["wireshark", ""], ["linux_sysctl", "tcp_rto_min_us"]]
+  },
+  "slow_client": {
+    "label": {"en": "Slow receiver", "tr": "Yavaş alıcı"},
+    "summary": [{"en": "The receiver closed its TCP window for {zero_window_time:time} ({pct}%), so it was reading too slowly.",
+      "tr": "Alıcı TCP penceresini {zero_window_time:time} (%{pct}) kapalı tuttu, yani veriyi fazla yavaş okuyordu."}],
+    "meaning": {"en": "The receiver's buffer filled, so it advertised a window of zero and the sender had to stop. The time runs from that packet to the next one from the same side with an open window.",
+      "tr": "Alıcının tamponu doldu, sıfır pencere bildirdi ve gönderen durmak zorunda kaldı. Süre bu paketten, aynı tarafın pencereyi tekrar açtığı pakete kadar ölçülür."},
+    "evidence": [
+      {"when": [["rst_code", "==", 9304]],
+       "en": "NetScaler ended this connection after its zero window probes ran out.",
+       "tr": "NetScaler, sıfır pencere yoklamaları tükendiği için bu bağlantıyı sonlandırdı."}
+    ],
+    "checks": [
+      {"en": "Find out which side was receiving. Downloads point to the client or a proxy, uploads point to the server.",
+       "tr": "Hangi tarafın alıcı olduğunu bulun. İndirmede istemci veya proxy, yüklemede sunucu sorumludur."},
+      {"en": "On that host run `ss -tmi`. A growing `Recv-Q` means the application is not reading fast enough.",
+       "tr": "O makinede `ss -tmi` çalıştırın. Büyüyen `Recv-Q`, uygulamanın veriyi yeterince hızlı okumadığını gösterir."},
+      {"en": "Check that application for CPU, disk and garbage collection pauses while it reads.",
+       "tr": "O uygulamada okuma sırasında CPU, disk ve garbage collection duraklamalarına bakın."}
+    ],
+    "misread": {"en": "A zero window is not a network fault. It is the receiver protecting itself. Behind NetScaler the receiver in a client-side capture may be NetScaler itself, because it runs a separate TCP connection on each side.",
+      "tr": "Sıfır pencere bir ağ arızası değildir, alıcının kendini korumasıdır. NetScaler her iki tarafta ayrı TCP bağlantısı yürüttüğü için istemci tarafı capture'ında alıcı NetScaler'ın kendisi olabilir."},
+    "sources": [["rfc9293", "3.8.6.1"], ["wireshark", ""], ["ns_resets", "9304"]]
+  },
+  "transfer": {
+    "label": {"en": "Data transfer", "tr": "Veri aktarımı"},
+    "summary": [{"en": "Sending {resp_bytes} bytes took {transfer_clean:time} ({pct}%). The body size or bandwidth limits it.",
+      "tr": "{resp_bytes} bayt göndermek {transfer_clean:time} (%{pct}) sürdü. Sınırlayan şey gövde boyutu veya bant genişliği."}],
+    "meaning": {"en": "The first byte came on time, but the rest of the response took long. Waits for retransmission, a closed window and delayed ACK are already taken out of this figure.",
+      "tr": "İlk bayt zamanında geldi ama cevabın geri kalanı uzun sürdü. Yeniden iletim, kapalı pencere ve gecikmeli ACK beklemeleri bu süreden zaten çıkarılmıştır."},
+    "evidence": [
+      {"when": [["throughput_mbps", ">=", 0]],
+       "en": "The effective speed was about {throughput_mbps:.1f} Mbit/s.",
+       "tr": "Etkin hız yaklaşık {throughput_mbps:.1f} Mbit/s."},
+      {"when": [["uncompressed_text", "==", true]],
+       "en": "This is a large text response without compression. Compressing it could shorten the transfer considerably.",
+       "tr": "Bu, sıkıştırılmamış büyük bir metin cevabı. Sıkıştırma aktarımı belirgin şekilde kısaltabilir."},
+      {"when": [["transfer_encoding", "has", "chunked"]],
+       "en": "The response is chunked, so the server may still have been producing it. Part of this time can be application time.",
+       "tr": "Cevap chunked gönderilmiş, yani sunucu veriyi gönderirken hâlâ üretiyor olabilir. Bu sürenin bir kısmı uygulama süresi olabilir."}
+    ],
+    "checks": [
+      {"en": "Check whether the response needs to be this large. Paging or fewer fields is the cheapest fix.",
+       "tr": "Cevabın bu kadar büyük olması gerekip gerekmediğine bakın. Sayfalama veya daha az alan en ucuz çözümdür."},
+      {"en": "Compare the speed with the link capacity. Far below capacity with a high round trip suggests a TCP window limit.",
+       "tr": "Hızı hat kapasitesiyle karşılaştırın. Kapasitenin çok altındaysa ve gidiş dönüş yüksekse TCP penceresi sınırı olabilir."},
+      {"en": "On reused connections, check `net.ipv4.tcp_slow_start_after_idle`. With the default of 1, TCP restarts slowly after an idle period.",
+       "tr": "Yeniden kullanılan bağlantılarda `net.ipv4.tcp_slow_start_after_idle` değerine bakın. Varsayılan 1 olduğunda TCP boşta kaldıktan sonra yavaş başlar."}
+    ],
+    "misread": {"en": "A long transfer is not always a slow network. A server producing data bit by bit looks the same, so check gaps between packets on the Connection page.",
+      "tr": "Uzun aktarım her zaman yavaş ağ demek değildir. Veriyi parça parça üreten sunucu da aynı görünür, bu yüzden bağlantı sayfasında paketler arasındaki boşluklara bakın."},
+    "sources": [["linux_sysctl", "tcp_slow_start_after_idle"], ["rfc9112", "7.1"]]
+  },
+  "upload": {
+    "label": {"en": "Slow upload", "tr": "Yavaş yükleme"},
+    "summary": [{"en": "Sending the request took {request_clean:time} ({pct}%).",
+      "tr": "İsteğin gönderilmesi {request_clean:time} (%{pct}) sürdü."}],
+    "meaning": {"en": "The time from the first to the last request byte was the largest part. Either the request is large for the path, or the sender or receiver held it back.",
+      "tr": "En büyük pay isteğin ilk baytından son baytına kadar geçen süreye ait. Ya istek bu yol için büyük ya da gönderen veya alıcı onu yavaşlattı."},
+    "evidence": [
+      {"when": [["req_bytes", ">=", 1000000]],
+       "en": "The request is {req_bytes} bytes long, so its size alone can explain the time.",
+       "tr": "İstek {req_bytes} bayt uzunluğunda, yani süreyi boyutu tek başına açıklayabilir."},
+      {"when": [["expect_continue", "==", true]],
+       "en": "The request uses `Expect: 100-continue`, so the client may have held the body back until the server replied or a timer ran out.",
+       "tr": "İstek `Expect: 100-continue` kullanıyor. İstemci gövdeyi sunucu cevap verene veya bir süre dolana kadar bekletmiş olabilir."}
+    ],
+    "checks": [
+      {"en": "Check the client's upload bandwidth, which is often much lower than download.",
+       "tr": "İstemcinin yükleme bant genişliğine bakın, çoğunlukla indirmeden çok daha düşüktür."},
+      {"en": "See whether a proxy or security device reads the whole body before passing it on.",
+       "tr": "Bir proxy veya güvenlik cihazının gövdeyi iletmeden önce tamamen okuyup okumadığına bakın."},
+      {"en": "Look for a large cookie or header if the request has no body.",
+       "tr": "İstekte gövde yoksa büyük bir cookie veya header arayın."}
+    ],
+    "sources": [["rfc9110", "10.1.1"]]
+  },
+  "queueing": {
+    "label": {"en": "Queued on connection", "tr": "Bağlantıda kuyrukta"},
+    "summary": [{"en": "The request waited {queue_time:time} ({pct}%) for an earlier response on the same connection.",
+      "tr": "İstek aynı bağlantıdaki önceki cevabı {queue_time:time} (%{pct}) bekledi."}],
+    "meaning": {"en": "On HTTP/1.1, responses must come back in the order requests were sent. This request finished sending while an earlier response was still going, so it could not be answered first.",
+      "tr": "HTTP/1.1'de cevaplar isteklerin gönderildiği sırayla dönmek zorundadır. Bu istek gönderilip bittiğinde önceki cevap hâlâ sürüyordu, bu yüzden önce cevaplanamadı."},
+    "evidence": [],
+    "checks": [
+      {"en": "Look at the previous request on this connection. It is the slow one, and fixing it removes this wait.",
+       "tr": "Bu bağlantıdaki önceki isteğe bakın. Asıl yavaş olan odur, onu düzeltmek bu beklemeyi de kaldırır."},
+      {"en": "See which client or proxy sends requests without waiting for answers, and whether it can stop doing so.",
+       "tr": "Hangi istemci veya proxy'nin cevap beklemeden istek gönderdiğini ve bunu kapatıp kapatamayacağını inceleyin."},
+      {"en": "Use more connections or HTTP/2, where responses do not need to wait for each other at HTTP level.",
+       "tr": "Daha çok bağlantı veya HTTP/2 kullanın. HTTP/2'de cevaplar HTTP seviyesinde birbirini beklemez."}
+    ],
+    "misread": {"en": "This is not the NetScaler surge queue. A surge queue holds a request before it reaches the server, and in a capture it appears as service time.",
+      "tr": "Bu, NetScaler surge queue değildir. Surge queue isteği sunucuya ulaşmadan önce tutar ve capture'da servis süresi olarak görünür."},
+    "sources": [["rfc9112", "9.3.2"], ["rfc9113", "1, 2"], ["ns_surge", ""]]
+  },
+  "delayed_ack": {
+    "label": {"en": "Delayed ACK", "tr": "Gecikmeli ACK"},
+    "summary": [{"en": "A sender waited {delayed_ack_time:time} ({pct}%) for a delayed ACK. This pattern often means Nagle and delayed ACK together.",
+      "tr": "Gönderen gecikmeli ACK için {delayed_ack_time:time} (%{pct}) bekledi. Bu örüntü çoğunlukla Nagle ile gecikmeli ACK'in birlikte çalıştığını gösterir."}],
+    "meaning": {"en": "The app found a sender sitting idle until an ACK that came 30 to 500 ms late, then sending again within 10 ms. Nagle holds small data until earlier data is acknowledged, while the receiver delays its ACK hoping to combine it with other data, so each waits for the other.",
+      "tr": "Uygulama, gönderenin 30 ile 500 ms arasında geç gelen bir ACK'e kadar boşta beklediğini, sonra 10 ms içinde tekrar gönderdiğini gördü. Nagle küçük veriyi önceki veri onaylanana kadar tutar, alıcı ise ACK'i başka veriyle birleştirmek için geciktirir. Böylece iki taraf birbirini bekler."},
+    "evidence": [],
+    "checks": [
+      {"en": "Set `TCP_NODELAY` on the sending socket. It turns Nagle off for that connection.",
+       "tr": "Gönderen sokette `TCP_NODELAY` ayarlayın. Bu, o bağlantı için Nagle'ı kapatır."},
+      {"en": "Write headers and body in one call, so the small piece does not wait for the first one to be acknowledged.",
+       "tr": "Header ve gövdeyi tek çağrıda yazın. Böylece küçük parça ilkinin onaylanmasını beklemez."},
+      {"en": "Linux can also send ACKs at once with `TCP_QUICKACK`, but the setting is not permanent, so prefer fixing the sender.",
+       "tr": "Linux'ta `TCP_QUICKACK` ile ACK hemen gönderilebilir, ama bu ayar kalıcı değildir. Gönderen tarafı düzeltmek daha doğrudur."}
+    ],
+    "misread": {"en": "Delayed ACK is normal TCP behaviour and not a fault on its own. The standard allows up to 0.5 s. It only hurts when it combines with small writes.",
+      "tr": "Gecikmeli ACK normal TCP davranışıdır, tek başına arıza değildir. Standart 0,5 saniyeye kadar izin verir. Yalnızca küçük yazmalarla birleştiğinde zarar verir."},
+    "sources": [["rfc9293", "3.7.4, 3.8.6.3"], ["linux_tcp", "TCP_NODELAY, TCP_QUICKACK"]]
+  },
+  "connect": {
+    "label": {"en": "Connection setup", "tr": "Bağlantı kurulumu"},
+    "summary": [{"en": "Opening the TCP connection took {connect_time:time} ({pct}%).",
+      "tr": "TCP bağlantısının açılması {connect_time:time} (%{pct}) sürdü."}],
+    "meaning": {"en": "The handshake took clearly longer than three round trips. A normal handshake is just round trips, so the extra time means a SYN or SYN-ACK was lost or the server was slow to accept.",
+      "tr": "El sıkışma üç gidiş dönüşten belirgin şekilde uzun sürdü. Normal el sıkışma yalnızca gidiş dönüşten oluşur. Fazla süre, SYN veya SYN-ACK'in kaybolduğunu ya da sunucunun bağlantıyı geç kabul ettiğini gösterir."},
+    "evidence": [
+      {"when": [["syn_retry", "==", true]],
+       "en": "The time is close to 1, 3, 7, 15 or 31 seconds. This is the pattern of a repeated SYN: the first wait is 1 s and doubles each time.",
+       "tr": "Süre 1, 3, 7, 15 veya 31 saniyeye yakın. Bu, tekrarlanan SYN örüntüsüdür: ilk bekleme 1 saniyedir ve her seferinde iki katına çıkar."}
+    ],
+    "checks": [
+      {"en": "On the server run `nstat -az TcpExtListenOverflows TcpExtListenDrops` and `ss -ltn`. A full accept queue drops new connections.",
+       "tr": "Sunucuda `nstat -az TcpExtListenOverflows TcpExtListenDrops` ve `ss -ltn` çalıştırın. Dolu accept kuyruğu yeni bağlantıları düşürür."},
+      {"en": "Compare `somaxconn` and the application's backlog value with the connection rate.",
+       "tr": "`somaxconn` ve uygulamanın backlog değerini bağlantı hızıyla karşılaştırın."},
+      {"en": "Check firewalls and connection tracking on the path, for example `conntrack -S` on the node.",
+       "tr": "Yoldaki güvenlik duvarlarına ve bağlantı takibine bakın, örneğin node üzerinde `conntrack -S`."},
+      {"en": "If a new connection is opened per request, enable reuse so this cost is paid less often.",
+       "tr": "Her istek için yeni bağlantı açılıyorsa bağlantı yeniden kullanımını açın, bu maliyet daha seyrek ödenir."}
+    ],
+    "misread": {"en": "When capture sits on the client side of NetScaler, this handshake is with NetScaler. It says nothing about the connection to the backend server.",
+      "tr": "Capture NetScaler'ın istemci tarafındaysa bu el sıkışma NetScaler iledir. Arka sunucuyla olan bağlantı hakkında bilgi vermez."},
+    "sources": [["rfc6298", "2.1, 5.5"], ["linux_tcp", "tcp_syn_retries"], ["linux_sysctl", "somaxconn"], ["ns_flow", ""]]
+  },
+  "tls": {
+    "label": {"en": "TLS handshake", "tr": "TLS el sıkışması"},
+    "summary": [{"en": "The TLS handshake took {tls_time:time} ({pct}%).",
+      "tr": "TLS el sıkışması {tls_time:time} (%{pct}) sürdü."}],
+    "meaning": {"en": "Setting up encryption took the largest share. A full TLS 1.3 handshake needs one round trip, so more than a few round trips points to slow key work, a large certificate chain or a lookup done during the handshake.",
+      "tr": "En büyük pay şifrelemenin kurulmasına ait. Tam bir TLS 1.3 el sıkışması bir gidiş dönüş ister. Birkaç gidiş dönüşten fazlası yavaş anahtar işlemine, büyük sertifika zincirine veya el sıkışma sırasında yapılan bir sorguya işaret eder."},
+    "evidence": [
+      {"when": [["tls_rtts", ">=", 4]],
+       "en": "This is about {tls_rtts:.0f} round trips, far more than the protocol needs, so most of it is processing and not network.",
+       "tr": "Bu yaklaşık {tls_rtts:.0f} gidiş dönüş ediyor, yani protokolün ihtiyacından çok fazla. Sürenin çoğu ağ değil, işlem süresi."},
+      {"when": [["tls_rtts", "<", 4], ["tls_rtts", ">", 0]],
+       "en": "This is about {tls_rtts:.0f} round trips, so the network explains most of it.",
+       "tr": "Bu yaklaşık {tls_rtts:.0f} gidiş dönüş ediyor, yani sürenin çoğunu ağ açıklıyor."},
+      {"when": [["tls_version", "!=", ""]],
+       "en": "The connection uses {tls_version}.",
+       "tr": "Bağlantı {tls_version} kullanıyor."}
+    ],
+    "checks": [
+      {"en": "Enable session resumption if clients keep doing full handshakes.",
+       "tr": "İstemciler sürekli tam el sıkışma yapıyorsa oturum sürdürmeyi açın."},
+      {"en": "Check CPU where TLS ends, usually NetScaler or an ingress. Key operations are CPU heavy under load.",
+       "tr": "TLS'in sonlandığı yerdeki CPU'ya bakın, bu genellikle NetScaler veya ingress'tir. Anahtar işlemleri yük altında CPU tüketir."},
+      {"en": "Check the certificate chain size and any client certificate step.",
+       "tr": "Sertifika zincirinin boyutuna ve varsa istemci sertifikası adımına bakın."}
+    ],
+    "misread": {"en": "A handshake is paid only on new connections. If it recurs on each request, the real issue is that connections are not reused.",
+      "tr": "El sıkışma yalnız yeni bağlantılarda ödenir. Her istekte tekrar ediyorsa asıl sorun bağlantıların yeniden kullanılmamasıdır."},
+    "sources": [["rfc8446", "2, 2.1, 2.2"]]
+  },
+  "no_response": {
+    "label": {"en": "No response", "tr": "Cevap yok"},
+    "summary": [{"en": "The server never answered. The capture shows no response for {elapsed:time} after the request.",
+      "tr": "Sunucu hiç cevap vermedi. Capture'da istekten sonraki {elapsed:time} boyunca cevap görünmüyor."}],
+    "meaning": {"en": "The capture holds the request but no HTTP response for it. The time is measured from the end of the request to the end of the connection in the capture.",
+      "tr": "Capture'da istek var ama ona ait HTTP cevabı yok. Süre, isteğin bitişinden bağlantının capture'daki bitişine kadar ölçülür."},
+    "evidence": [
+      {"when": [["still_open", "==", true]],
+       "en": "The connection does not close in the capture, so the capture may simply have stopped before the answer. Take a longer capture before calling this a failure.",
+       "tr": "Bağlantı capture içinde kapanmıyor, yani capture cevaptan önce durmuş olabilir. Bunu arıza saymadan önce daha uzun bir capture alın."},
+      {"when": [["capture_point", "==", "near_server"]],
+       "en": "The capture is close to the server, so the request reached it and no reply left it.",
+       "tr": "Capture sunucuya yakın, yani istek sunucuya ulaşmış ve oradan cevap çıkmamış."},
+      {"when": [["capture_point", "in", ["near_client", "middle"]]],
+       "en": "The capture is not next to the server, so the request or the reply may have been lost after this point.",
+       "tr": "Capture sunucunun yanında değil, yani istek veya cevap bu noktadan sonra kaybolmuş olabilir."},
+      {"when": [["near_timeout", "==", true]],
+       "en": "The connection ended after almost exactly {timeout} seconds, which looks like a timeout on one side.",
+       "tr": "Bağlantı neredeyse tam {timeout} saniye sonra bitti. Bu, bir taraftaki zaman aşımına benziyor."}
+    ],
+    "checks": [
+      {"en": "Look for this request in the server's access log. If it is there, follow it inside the application.",
+       "tr": "Bu isteği sunucunun access loglarında arayın. Varsa uygulamanın içinde takip edin."},
+      {"en": "If it is not there, capture closer to the server and see where it disappears.",
+       "tr": "Yoksa sunucuya daha yakından capture alın ve nerede kaybolduğunu görün."},
+      {"en": "In Kubernetes, check `kubectl describe pod` for restarts and OOMKilled.",
+       "tr": "Kubernetes'te `kubectl describe pod` ile yeniden başlatma ve OOMKilled durumuna bakın."},
+      {"en": "Check for an analysis filter or a capture filter that may have removed the reply.",
+       "tr": "Cevabı çıkarmış olabilecek bir analiz filtresi veya capture filtresi var mı bakın."}
+    ],
+    "misread": {"en": "No response in the capture does not always mean no response was sent. A capture that sees one direction only gives the same result.",
+      "tr": "Capture'da cevap olmaması her zaman cevap gönderilmediği anlamına gelmez. Tek yönü gören bir capture da aynı sonucu verir."},
+    "sources": [["k8s_resources", "memory limits"]]
+  },
+  "connection_reset": {
+    "label": {"en": "Connection reset", "tr": "Bağlantı sıfırlandı"},
+    "summary": [{"en": "No response: the {closed_by:term} reset the connection {elapsed:time} after the request.",
+      "tr": "Cevap yok: {closed_by:term}, istekten {elapsed:time} sonra bağlantıyı sıfırladı."}],
+    "meaning": {"en": "An RST ends a connection at once, without the normal close. Both sides drop any pending data. A TCP stack sends one when an application aborts, or when a packet arrives for a connection it no longer knows.",
+      "tr": "RST, bağlantıyı normal kapanış olmadan anında bitirir. İki taraf da bekleyen veriyi atar. TCP yığını bunu uygulama bağlantıyı iptal ettiğinde veya artık tanımadığı bir bağlantı için paket geldiğinde gönderir."},
+    "evidence": [
+      {"when": [["rst_note", "!=", ""]],
+       "en": "The RST carries the value {rst_code} in its window field. If NetScaler sent it, the reference says: {rst_note}",
+       "tr": "RST paketinin window alanında {rst_code} değeri var. Paketi NetScaler gönderdiyse başvuru belgesi şunu söylüyor: {rst_note}"},
+      {"when": [["closed_by", "==", "server"], ["capture_point", "in", ["near_client", "middle"]]],
+       "en": "The sender looks like the server, but with NetScaler in the path it may be the VIP itself. Check the source IP of the RST.",
+       "tr": "Gönderen sunucu gibi görünüyor, ama yolda NetScaler varsa bu VIP'in kendisi olabilir. RST paketinin kaynak IP'sine bakın."},
+      {"when": [["near_timeout", "==", true]],
+       "en": "The RST came after almost exactly {timeout} seconds, which looks like a timeout setting on some device.",
+       "tr": "RST neredeyse tam {timeout} saniye sonra geldi. Bu, bir cihazdaki zaman aşımı ayarına benziyor."},
+      {"when": [["new_conn", "==", false], ["elapsed", "<", 0.05]],
+       "en": "The RST came at once on a reused connection. The other side had probably closed it as idle while this request was on its way.",
+       "tr": "RST, yeniden kullanılan bağlantıda hemen geldi. Karşı taraf bağlantıyı boşta diye kapatmışken bu istek yolda olmuş olabilir."}
+    ],
+    "checks": [
+      {"en": "Line up idle timeouts along the path. Each device should keep idle connections longer than the one in front of it.",
+       "tr": "Yol üzerindeki boşta kalma sürelerini hizalayın. Her cihaz, önündeki cihazdan daha uzun süre boşta bağlantı tutmalıdır."},
+      {"en": "Compare the time with NetScaler's client idle timeout, 180 seconds by default, and with application server timeouts.",
+       "tr": "Süreyi NetScaler istemci boşta kalma süresiyle (varsayılan 180 saniye) ve uygulama sunucusu zaman aşımlarıyla karşılaştırın."},
+      {"en": "Look at the application log and pod restarts at that moment. A crash resets its connections.",
+       "tr": "O andaki uygulama loguna ve pod yeniden başlatmalarına bakın. Çöken süreç bağlantılarını sıfırlar."}
+    ],
+    "misread": {"en": "The side that sent the RST is not always the side at fault. A device can send it for a connection it dropped, and NetScaler can pass on an RST that started elsewhere.",
+      "tr": "RST gönderen taraf her zaman hatalı taraf değildir. Bir cihaz düşürdüğü bağlantı için RST gönderebilir, NetScaler da başka yerde başlayan RST'yi iletebilir."},
+    "sources": [["rfc9293", "3.5.2, 3.5.3"], ["ns_resets", ""], ["ns_idle", ""]]
+  },
+  "truncated": {
+    "label": {"en": "Incomplete response", "tr": "Eksik cevap"},
+    "summary": [{"en": "The response stopped early: {body_bytes} of {resp_content_length} body bytes arrived before the connection closed ({close_type} by {closed_by:term}).",
+      "tr": "Cevap erken kesildi: bağlantı kapanmadan önce {resp_content_length} gövde baytının {body_bytes} kadarı geldi ({closed_by:term} tarafından {close_type})."}],
+    "meaning": {"en": "The response announced its size with Content-Length, but fewer bytes arrived before the connection ended. HTTP treats such a message as incomplete, so the client cannot trust it. The check does not run on decrypted HTTPS.",
+      "tr": "Cevap boyutunu Content-Length ile bildirdi ama bağlantı bitmeden daha az bayt geldi. HTTP böyle bir mesajı eksik sayar, istemci ona güvenemez. Bu kontrol çözülmüş HTTPS trafiğinde yapılmaz."},
+    "evidence": [
+      {"when": [["near_timeout", "==", true]],
+       "en": "The cut came after almost exactly {timeout} seconds, which looks like a timeout on a proxy or server.",
+       "tr": "Kesinti neredeyse tam {timeout} saniye sonra oldu. Bu, proxy veya sunucudaki bir zaman aşımına benziyor."},
+      {"when": [["close_type", "==", "RST"]],
+       "en": "The connection ended with an RST and not a normal close, so this was an abort.",
+       "tr": "Bağlantı normal kapanışla değil RST ile bitti, yani işlem iptal edilmiş."},
+      {"when": [["rst_note", "!=", ""]],
+       "en": "The RST carries the value {rst_code}. If NetScaler sent it, the reference says: {rst_note}",
+       "tr": "RST paketinde {rst_code} değeri var. Paketi NetScaler gönderdiyse başvuru belgesi şunu söylüyor: {rst_note}"}
+    ],
+    "checks": [
+      {"en": "Check the Overview page for a warning about cut packets. Short capture lengths can look like missing bytes.",
+       "tr": "Genel bakış sayfasında kırpılmış paket uyarısı var mı bakın. Kısa capture uzunluğu eksik bayt gibi görünebilir."},
+      {"en": "Check server logs for a crash or an out of memory event while it was writing.",
+       "tr": "Sunucu loglarında yazma sırasında çökme veya bellek yetmezliği arayın."},
+      {"en": "Compare with timeouts on proxies, since a long download can outlive them.",
+       "tr": "Proxy zaman aşımlarıyla karşılaştırın, uzun bir indirme bu süreleri aşabilir."}
+    ],
+    "sources": [["rfc9112", "6.3, 8"], ["nginx_proxy", "proxy_read_timeout"]]
+  },
+  "gateway": {
+    "label": {"en": "Gateway error", "tr": "Ağ geçidi hatası"},
+    "summary": [
+      {"when": [["capture_point", "==", "near_server"]],
+       "en": "HTTP {status} came from close to the capture point after {wait:time}. If a proxy or sidecar runs there, look at the service behind it.",
+       "tr": "HTTP {status} capture noktasına yakın bir yerden {wait:time} sonra geldi. Orada proxy veya sidecar çalışıyorsa arkasındaki servise bakın."},
+      {"en": "HTTP {status} came from a proxy or gateway after {wait:time}, so look at the service behind it.",
+       "tr": "HTTP {status}, proxy veya ağ geçidinden {wait:time} sonra geldi, bu yüzden arkasındaki servise bakın."}
+    ],
+    "meaning": {"en": "These codes usually mean a device in the middle could not get a good answer. 502 is an invalid reply from upstream, 503 is temporary overload or maintenance, and 504 is no reply from upstream in time.",
+      "tr": "Bu kodlar çoğunlukla aradaki bir cihazın sağlıklı cevap alamadığını gösterir. 502 yukarıdan geçersiz cevap, 503 geçici aşırı yük veya bakım, 504 ise yukarıdan zamanında cevap gelmemesidir."},
+    "evidence": [
+      {"when": [["status", "==", 502]],
+       "en": "502: the upstream connection failed or closed. If it comes in short bursts, compare keepalive timeouts: a proxy can reuse a connection the backend just closed.",
+       "tr": "502: yukarı bağlantı başarısız oldu veya kapandı. Kısa dalgalar halinde geliyorsa keepalive sürelerini karşılaştırın: proxy, arka sunucunun az önce kapattığı bağlantıyı kullanmış olabilir."},
+      {"when": [["status", "==", 503]],
+       "en": "503: the service is overloaded, in maintenance or has no healthy backend.",
+       "tr": "503: servis aşırı yüklü, bakımda veya sağlıklı arka sunucusu yok."},
+      {"when": [["status", "==", 504]],
+       "en": "504: the upstream did not answer in time, so a slow service is likely, and the wait shows the proxy's limit.",
+       "tr": "504: yukarı servis zamanında cevap vermedi. Yavaş servis olasıdır ve bekleme süresi proxy'nin sınırını gösterir."},
+      {"when": [["near_timeout", "==", true]],
+       "en": "The error came after almost exactly {timeout} seconds, which is probably a configured timeout. In NGINX, `proxy_read_timeout` defaults to 60 s.",
+       "tr": "Hata neredeyse tam {timeout} saniye sonra geldi, bu büyük olasılıkla ayarlanmış bir zaman aşımıdır. NGINX'te `proxy_read_timeout` varsayılan olarak 60 saniyedir."},
+      {"when": [["resp_headers", "has", "nginx"]],
+       "en": "The response headers mention nginx, so this is a likely source of the error.",
+       "tr": "Cevap başlıklarında nginx geçiyor, yani hatanın kaynağı bu olabilir."},
+      {"when": [["resp_headers", "has", "envoy"]],
+       "en": "The response headers mention Envoy, so a gateway or service mesh proxy is a likely source of the error.",
+       "tr": "Cevap başlıklarında Envoy geçiyor, yani hatanın kaynağı bir gateway veya service mesh proxy'si olabilir."},
+      {"when": [["resp_headers", "has", "retry-after"]],
+       "en": "The response has a Retry-After header, so the sender expects this to be temporary.",
+       "tr": "Cevapta Retry-After başlığı var, yani gönderen bu durumun geçici olmasını bekliyor."}
+    ],
+    "checks": [
+      {"en": "Find which device produced the response. Check the response's headers and body, and capture behind that device.",
+       "tr": "Cevabı hangi cihazın ürettiğini bulun. Cevabın başlıklarına ve gövdesine bakın, o cihazın arkasından capture alın."},
+      {"en": "Check the proxy's error log for the same moment.",
+       "tr": "Aynı anda proxy'nin hata loguna bakın."},
+      {"en": "In Kubernetes, check `kubectl get endpointslices`, readiness probes and pod restarts.",
+       "tr": "Kubernetes'te `kubectl get endpointslices` çıktısına, readiness yoklamalarına ve pod yeniden başlatmalarına bakın."}
+    ],
+    "misread": {"en": "The device that returned the error is usually not the one that failed. Fix the service behind it first, and raise timeouts only after that.",
+      "tr": "Hatayı döndüren cihaz çoğunlukla arızalanan cihaz değildir. Önce arkasındaki servisi düzeltin, zaman aşımlarını ancak ondan sonra artırın."},
+    "sources": [["rfc9110", "15.6.3, 15.6.4, 15.6.5"], ["nginx_proxy", "proxy_read_timeout"]]
+  },
+  "server_errors": {
+    "label": {"en": "Server error", "tr": "Sunucu hatası"},
+    "meaning": {"en": "The server met an unexpected problem and could not finish the request. The cause is inside the application or something it depends on, not in the network path.",
+      "tr": "Sunucu beklenmedik bir sorunla karşılaştı ve isteği tamamlayamadı. Sebep ağ yolunda değil, uygulamanın veya bağlı olduğu servislerin içindedir."},
+    "checks": [
+      {"en": "Open a request from the list and read the response body. It often names the error.",
+       "tr": "Listeden bir istek açıp cevap gövdesini okuyun. Hata çoğunlukla orada yazar."},
+      {"en": "Use the request's time and ID to find it in the application log.",
+       "tr": "İsteğin zamanı ve kimliğiyle uygulama loglarında bulun."},
+      {"en": "See whether errors hit one URL or one server, using the URLs and Hosts tabs.",
+       "tr": "URLs ve Hosts sekmeleriyle hataların tek bir URL'de mi tek bir sunucuda mı olduğuna bakın."}
+    ],
+    "sources": [["rfc9110", "15.6.1"]]
+  },
+  "slow_backend": {
+    "label": {"en": "Server out of line", "tr": "Ayrışan sunucu"},
+    "meaning": {"en": "Behind a load balancer, one bad server can hide in the average. The app compares each server's median time and error share with the others on the same port.",
+      "tr": "Yük dengeleyici arkasında tek bir kötü sunucu ortalamanın içinde kaybolabilir. Uygulama her sunucunun medyan süresini ve hata payını aynı porttaki diğer sunucularla karşılaştırır."},
+    "checks": [
+      {"en": "Open the Servers tab and see which URLs the marked server answers. A different mix of URLs can explain the difference.",
+       "tr": "Sunucular sekmesini açıp işaretli sunucunun hangi URL'lere cevap verdiğine bakın. Farklı URL karışımı aradaki farkı açıklayabilir."},
+      {"en": "Compare CPU, memory, disk and restarts of that server or pod with its peers.",
+       "tr": "O sunucunun veya pod'un CPU, bellek, disk ve yeniden başlatma durumunu diğerleriyle karşılaştırın."},
+      {"en": "Check whether it runs a different version, or sits on a different node or network path.",
+       "tr": "Farklı sürüm çalıştırıp çalıştırmadığına, başka bir node'da veya ağ yolunda olup olmadığına bakın."},
+      {"en": "Ask the NetScaler team for that service's health and load balancing state.",
+       "tr": "NetScaler ekibinden o servisin sağlık ve yük dengeleme durumunu isteyin."}
+    ],
+    "sources": [["ns_flow", ""]]
+  },
+  "no_handshake": {
+    "label": {"en": "Handshake not completed", "tr": "El sıkışma tamamlanmadı"},
+    "meaning": {"en": "The connection has at most three packets, no requests and no full handshake. Either the SYN got no reply, or the port refused it, or the capture missed part of it.",
+      "tr": "Bağlantıda en fazla üç paket var, istek yok ve el sıkışma tamamlanmamış. SYN cevap almamış, port reddetmiş veya capture bir kısmını kaçırmış olabilir."},
+    "checks": [
+      {"en": "Try the same target with `nc -vz <ip> <port>` from the same host.",
+       "tr": "Aynı makineden aynı hedefi `nc -vz <ip> <port>` ile deneyin."},
+      {"en": "An RST reply means the port is closed or a device refuses it. Silence points to a firewall or an unreachable host.",
+       "tr": "RST cevabı portun kapalı olduğunu veya bir cihazın reddettiğini gösterir. Sessizlik güvenlik duvarına veya ulaşılamayan makineye işaret eder."},
+      {"en": "In Kubernetes, check `kubectl get endpointslices` and NetworkPolicy rules.",
+       "tr": "Kubernetes'te `kubectl get endpointslices` çıktısına ve NetworkPolicy kurallarına bakın."}
+    ],
+    "misread": {"en": "A capture started in the middle of a connection can look like this too.",
+      "tr": "Bağlantının ortasında başlatılan bir capture da böyle görünebilir."},
+    "sources": [["rfc9293", "3.5.2"], ["linux_tcp", "tcp_syn_retries"]]
+  },
+  "small_mss": {
+    "label": {"en": "Small MSS", "tr": "Küçük MSS"},
+    "meaning": {"en": "MSS is the largest TCP payload per packet. Below 1200 bytes, the same data needs more packets and more processing. A tunnel, a VPN or a device clamping MSS often sets such values. With no MSS option at all, IPv4 falls back to 536 bytes.",
+      "tr": "MSS, paket başına en büyük TCP yüküdür. 1200 baytın altında aynı veri daha çok paket ve daha çok işlem gerektirir. Bu değeri çoğunlukla tünel, VPN veya MSS kısan bir cihaz belirler. MSS seçeneği hiç yoksa IPv4 536 bayta düşer."},
+    "checks": [
+      {"en": "Check the path for tunnels, VPNs and overlay networks.",
+       "tr": "Yolda tünel, VPN ve overlay ağ olup olmadığına bakın."},
+      {"en": "Check the MSS and MTU settings on load balancers and network interfaces with `ip link`.",
+       "tr": "Yük dengeleyicilerdeki MSS ve MTU ayarlarını, ağ arayüzlerinde de `ip link` ile MTU değerini kontrol edin."}
+    ],
+    "sources": [["rfc9293", "3.7.1, 3.7.2"]]
+  },
+  "slow_dns": {
+    "label": {"en": "Slow DNS", "tr": "Yavaş DNS"},
+    "meaning": {"en": "A lookup took over 100 ms between query and answer. DNS time sits before the connection, so it may not show in the request's own timing. The capture must include DNS traffic for this to appear.",
+      "tr": "Sorgu ile cevap arasında 100 ms'den fazla geçti. DNS süresi bağlantıdan önce olduğu için isteğin kendi süresinde görünmeyebilir. Bunun görünmesi için capture'ın DNS trafiğini içermesi gerekir."},
+    "checks": [
+      {"en": "A delay near 5 seconds usually means a lost query: the resolver's default timeout is 5 s. In Kubernetes, check conntrack races on the node.",
+       "tr": "5 saniyeye yakın gecikme çoğunlukla kaybolan bir sorguyu gösterir, çünkü resolver'ın varsayılan zaman aşımı 5 saniyedir. Kubernetes'te node üzerindeki conntrack çakışmalarına bakın."},
+      {"en": "Check `ndots` in the pod's `/etc/resolv.conf`. The Kubernetes default of 5 turns one external name into several queries.",
+       "tr": "Pod içindeki `/etc/resolv.conf` dosyasında `ndots` değerine bakın. Kubernetes'in varsayılanı olan 5, tek bir dış adı birkaç sorguya dönüştürür."},
+      {"en": "Check CoreDNS load and consider NodeLocal DNSCache for heavy clusters.",
+       "tr": "CoreDNS yüküne bakın, yoğun cluster'larda NodeLocal DNSCache düşünün."}
+    ],
+    "sources": [["resolv_conf", "timeout"], ["k8s_dns_issue", ""]]
+  },
+  "pmtu": {
+    "label": {"en": "Path MTU problem", "tr": "Yol MTU sorunu"},
+    "meaning": {"en": "A device on the path sent ICMP saying a packet was too big for the next link. TCP should then send smaller segments. If such messages are blocked, large packets vanish while small ones work, and connections hang.",
+      "tr": "Yoldaki bir cihaz, paketin sonraki hat için fazla büyük olduğunu ICMP ile bildirdi. TCP bu durumda daha küçük segment göndermelidir. Bu mesajlar engellenirse büyük paketler kaybolur, küçükler geçer ve bağlantılar takılır."},
+    "checks": [
+      {"en": "Find the smallest MTU on the path with `ping -M do -s <size> <ip>`.",
+       "tr": "Yoldaki en küçük MTU'yu `ping -M do -s <boyut> <ip>` ile bulun."},
+      {"en": "Make sure firewalls allow ICMP fragmentation needed messages.",
+       "tr": "Güvenlik duvarlarının ICMP fragmentation needed mesajlarına izin verdiğinden emin olun."},
+      {"en": "Check pod and overlay MTU values. Overlay headers take room from each packet.",
+       "tr": "Pod ve overlay MTU değerlerine bakın. Overlay başlıkları her paketten yer alır."},
+      {"en": "On Linux, `net.ipv4.tcp_mtu_probing=1` lets TCP probe when it detects a black hole.",
+       "tr": "Linux'ta `net.ipv4.tcp_mtu_probing=1`, TCP'nin kara delik gördüğünde yoklama yapmasını sağlar."}
+    ],
+    "sources": [["rfc4821", "2, 7.7"], ["linux_tcp", "tcp_mtu_probing"]]
+  },
+  "ip_fragments": {
+    "label": {"en": "IP fragmentation", "tr": "IP parçalanması"},
+    "meaning": {"en": "Packets were split at IP level. If one fragment is lost, the whole packet must be sent again, and some firewalls and load balancers drop fragments.",
+      "tr": "Paketler IP seviyesinde bölündü. Tek bir parça kaybolursa paketin tamamı yeniden gönderilmelidir. Bazı güvenlik duvarları ve yük dengeleyiciler parçaları düşürür."},
+    "checks": [
+      {"en": "See which traffic is fragmented. TCP normally avoids it, so UDP or a tunnel is a likely source.",
+       "tr": "Hangi trafiğin parçalandığına bakın. TCP normalde bundan kaçınır, kaynak büyük olasılıkla UDP veya bir tüneldir."},
+      {"en": "Align the MTU on the path so that packets no longer need splitting.",
+       "tr": "Paketlerin bölünmesine gerek kalmaması için yol üzerindeki MTU değerlerini hizalayın."}
+    ],
+    "sources": [["rfc9293", "3.7.2"]]
+  }
+}

@@ -11,7 +11,16 @@ Restart=on-failure
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true
-ReadWritePaths=/var/lib/pcap-analyzer /tmp
+ReadWritePaths=/var/lib/pcap-analyzer
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+CapabilityBoundingSet=
+CPUQuota=200%
+MemoryMax=2G
+TasksMax=256
 
 [Install]
 WantedBy=multi-user.target

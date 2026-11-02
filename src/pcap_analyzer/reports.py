@@ -1,7 +1,9 @@
 """Read-only reports over one analysis. The CLI and the web interface share these."""
+import math
+import statistics
 from dataclasses import dataclass
 
-from . import causes
+from . import causes, knowledge
 
 SUCCESS = "status BETWEEN 200 AND 399"
 TIME_STATS = """count(*) AS requests, count(*) FILTER ({ok}) AS ok,
@@ -12,6 +14,13 @@ TIME_STATS = """count(*) AS requests, count(*) FILTER ({ok}) AS ok,
 TOP_DEFAULT = 5
 TOP_PERCENT = 0.10
 SLOWEST = 10
+BUCKETS_S = (0.1, 0.5, 1, 2, 5, 10, 30, 60, 300, 600, 1800, 3600)
+CHART_POINTS = 150
+BACKEND_MIN_REQUESTS = 5
+BACKEND_SLOW_RATIO = 2.0
+BACKEND_ERROR_GAP = 0.2
+LOST_SHARE_HIGH = 0.01
+MOST = 0.5
 
 
 def rows(db, sql, params=()):
@@ -36,6 +45,82 @@ def overview(db, meta):
         statuses=rows(db, """SELECT coalesce(CAST(status // 100 AS VARCHAR) || 'xx', 'none') AS class, count(*) AS requests
             FROM http_transactions GROUP BY 1 ORDER BY 1"""),
         capture_points=rows(db, "SELECT capture_point, count(*) AS connections FROM tcp_connections GROUP BY 1 ORDER BY 2 DESC"))
+
+
+def quality(meta):
+    """How far this capture can be trusted, as a level and the reasons for it."""
+    q = meta.get("quality")
+    if q is None:
+        return None
+    conns, found = q["connections"] or 1, []
+
+    def note(key, level):
+        found.append(dict(key=key, level=level, text=knowledge.quality_line(key, q[key])))
+
+    if q["unseen"]:
+        note("unseen", "low" if q["unseen"] / (q["tcp_packets"] or 1) > LOST_SHARE_HIGH else "medium")
+    if q["encrypted"]:
+        note("encrypted", "low" if q["encrypted"] == q["connections"] else "medium")
+    if q["one_way"]:
+        note("one_way", "low" if q["one_way"] / conns > MOST else "medium")
+    if q["snapped"]:
+        note("snapped", "medium")
+    if q["started_before"]:
+        note("started_before", "medium" if q["started_before"] / conns > MOST else "info")
+    if q["open_at_end"]:
+        note("open_at_end", "info")
+    if q["copies"]:
+        note("copies", "info")
+    levels = {f["level"] for f in found}
+    level = "low" if "low" in levels else "medium" if "medium" in levels else "high"
+    return dict(level=level, label=knowledge.t({"high": "High", "medium": "Medium", "low": "Low"}[level]), findings=found)
+
+
+def timeline(db):
+    """Traffic over time, so that the start of a problem can be read from one chart."""
+    span = one(db, "SELECT min(req_start) AS lo, max(coalesce(resp_end, req_end)) AS hi FROM http_transactions")
+    if span["lo"] is None:
+        return dict(start=None, width=None, rows=[])
+    lo, length = span["lo"], max(span["hi"] - span["lo"], 0.001)
+    width = next((b for b in BUCKETS_S if length / b <= CHART_POINTS), BUCKETS_S[-1])
+    count = int(length // width) + 1
+    got = {r["slot"]: r for r in rows(db, """SELECT CAST(floor((req_start - ?) / ?) AS INT) AS slot, count(*) AS requests,
+        count(*) FILTER (status >= 500 OR NOT answered) AS errors, quantile_cont(total, 0.95) AS p95_total FROM http_transactions GROUP BY 1""", [lo, width])}
+    lost = {r["slot"]: r["n"] for r in rows(db, """SELECT CAST(floor((time - ?) / ?) AS INT) AS slot, count(*) AS n FROM tcp_events
+        WHERE event IN ('retransmission', 'fast_retransmission') GROUP BY 1""", [lo, width])}
+    spans = db.execute("SELECT start_time, end_time FROM tcp_connections").fetchall()
+    out = []
+    for slot in range(count):
+        start, r = lo + slot * width, got.get(slot, {})
+        out.append(dict(start=start, requests=r.get("requests", 0), errors=r.get("errors", 0), p95_total=r.get("p95_total"), retransmissions=lost.get(slot, 0),
+                        open_connections=sum(a < start + width and b >= start for a, b in spans)))
+    return dict(start=lo, width=width, rows=out)
+
+
+def _others(rows_, key, row):
+    values = [r[key] for r in rows_ if r is not row and r[key] is not None]
+    return statistics.median(values) if values else None
+
+
+def backends(db):
+    """Each server behind the capture point. A slow one disappears in an average, so mark it against its peers."""
+    got = rows(db, f"""SELECT c.server_ip, c.server_port, count(DISTINCT c.stream) AS connections, count(*) AS requests,
+        count(*) FILTER (t.status >= 500 OR NOT t.answered) AS failed, avg(t.total) AS avg_total, median(t.total) AS p50_total,
+        quantile_cont(t.total, 0.95) AS p95_total, median(t.service) AS p50_service, count(DISTINCT c.stream) FILTER (c.close_type = 'RST') AS resets,
+        sum(t.retrans_count) AS retransmissions FROM http_transactions t JOIN tcp_connections c USING (stream)
+        GROUP BY 1, 2 ORDER BY p50_total DESC NULLS LAST""")
+    for r in got:
+        r["error_share"], r["flag"] = r["failed"] / r["requests"], None
+    for r in got:
+        peers = [x for x in got if x["server_port"] == r["server_port"] and x["requests"] >= BACKEND_MIN_REQUESTS]
+        if r not in peers or len(peers) < 2:
+            continue
+        usual, usual_errors = _others(peers, "p50_total", r), _others(peers, "error_share", r)
+        if usual_errors is not None and r["error_share"] - usual_errors > BACKEND_ERROR_GAP:
+            r["flag"] = "errors"
+        elif usual is not None and r["p50_total"] is not None and r["p50_total"] > BACKEND_SLOW_RATIO * usual and r["p50_total"] - usual >= causes.SLOW_S:
+            r["flag"] = "slow"
+    return got
 
 
 def _where(flt):
@@ -92,6 +177,8 @@ class Inspect:
     url: str | None = None
     min_size: int | None = None
     size_of: str = "total"  # total, request, response, packet
+    start: float | None = None
+    end: float | None = None
 
 
 SIZE_SQL = {"total": "coalesce(t.req_bytes, 0) + coalesce(t.resp_bytes, 0)", "request": "t.req_bytes", "response": "t.resp_bytes",
@@ -100,6 +187,12 @@ SIZE_SQL = {"total": "coalesce(t.req_bytes, 0) + coalesce(t.resp_bytes, 0)", "re
 
 def conn_where(f):
     sql, params = [], []
+    if f.start is not None:
+        sql.append("c.end_time >= ?")
+        params.append(f.start)
+    if f.end is not None:
+        sql.append("c.start_time <= ?")
+        params.append(f.end)
     if f.src:
         sql.append("c.client_ip = ?")
         params.append(f.src)
@@ -117,6 +210,12 @@ def conn_where(f):
 
 def txn_where(f):
     sql, params = conn_where(f)
+    if f.start is not None:
+        sql.append("t.req_start >= ?")
+        params.append(f.start)
+    if f.end is not None:
+        sql.append("t.req_start <= ?")
+        params.append(f.end)
     if f.url:
         sql.append("contains(lower(coalesce(t.uri, '')), lower(?))")
         params.append(f.url)
@@ -161,19 +260,23 @@ def describe(db, t):
     """Add the time breakdown and a plain explanation to one transaction."""
     conn = one(db, "SELECT * FROM tcp_connections WHERE stream = ?", [t["stream"]])
     ph = causes.phases(t)
-    t["phases"] = [dict(name=k, label=causes.PHASE_LABELS[k], seconds=v) for k, v in ph.items() if v > 0]
-    t["cause_label"] = causes.LABELS[t["cause"]]
+    t["phases"] = [knowledge.phase(k, v) for k, v in ph.items() if v > 0]
+    t["cause_label"] = knowledge.label(t["cause"])
     t["explanation"] = causes.explain(t, conn)
     t["conn"] = conn
     t["longest"] = t["total"] if t["total"] is not None else max(conn["end_time"] - t["req_end"], 0)
     if not t["answered"]:
-        t["phases"] = [dict(name="service", label="Waiting for a response", seconds=t["longest"])]
+        t["phases"] = [dict(knowledge.phase("waiting", t["longest"]), name="service")]
     return t
 
 
 def transaction(db, tid):
     t = one(db, "SELECT * FROM http_transactions WHERE id = ?", [tid])
-    return describe(db, t) if t else None
+    if not t:
+        return None
+    t = describe(db, t)
+    t["guide"] = knowledge.guide(t["cause"], causes.facts(t, t["conn"]))
+    return t
 
 
 def histogram(db):
@@ -187,42 +290,52 @@ def histogram(db):
     return got
 
 
-# key, title, why, severity, condition on requests (t), condition on connections (c)
+# key, severity, condition on requests (t), condition on connections (c). Titles and reasons come from the knowledge base.
 ISSUES = [
-    ("no_response", "Requests without a response", "The service hung, crashed, or a device dropped the reply.", 1, "NOT t.answered", None),
-    ("resets", "Connections reset", "An RST ended the connection, often a timeout or a crash on one side.", 1, None, "c.close_type = 'RST'"),
-    ("no_handshake", "Handshakes not completed", "SYN got no full answer: a firewall, a closed port or an unreachable host.", 1, None,
-     "NOT c.handshake_seen AND c.transactions = 0 AND c.packets <= 3"),
-    ("truncated", "Incomplete responses", "Fewer body bytes arrived than Content-Length promised.", 1, "t.truncated", None),
-    ("gateway", "Gateway errors", "HTTP 502, 503 or 504: a proxy got no good answer from the service behind it.", 1, "t.status IN (502, 503, 504)", None),
-    ("server_errors", "Server errors", "Other HTTP 5xx answers.", 1, "t.status >= 500 AND t.status NOT IN (502, 503, 504)", None),
-    ("slow_service", "Slow service", "The server took most of the time.", 2, "t.cause = 'service'", None),
-    ("loss", "Packet loss", "Retransmissions cost noticeable time.", 2, "t.cause = 'loss'", None),
-    ("retrans", "Connections with retransmissions", "Packets were lost or delayed on the path.", 2, None, "c.retransmissions > 0"),
-    ("slow_client", "Slow receivers", "The receiver closed its TCP window.", 2, "t.zero_window_time > 0", None),
-    ("delayed_ack", "Delayed ACK waits", "Senders stalled for a late ACK, a classic Nagle and delayed ACK pattern.", 3, "t.delayed_ack_time > 0", None),
-    ("queueing", "Requests queued on a connection", "A request waited for an earlier response on the same connection.", 3, "t.queue_time > 0", None),
-    ("network", "Network delay", "Round-trip time was the largest part.", 3, "t.cause = 'network'", None),
-    ("small_mss", "Small MSS", "Small segments mean more packets and round trips, often from a tunnel or a low MTU.", 3, None, "c.mss < 1200"),
+    ("no_response", 1, "NOT t.answered", None),
+    ("resets", 1, None, "c.close_type = 'RST'"),
+    ("no_handshake", 1, None, "NOT c.handshake_seen AND c.transactions = 0 AND c.packets <= 3"),
+    ("truncated", 1, "t.truncated", None),
+    ("gateway", 1, "t.status IN (502, 503, 504)", None),
+    ("server_errors", 1, "t.status >= 500 AND t.status NOT IN (502, 503, 504)", None),
+    ("slow_service", 2, "t.cause = 'service'", None),
+    ("loss", 2, "t.cause = 'loss'", None),
+    ("retrans", 2, None, "c.retransmissions > 0"),
+    ("slow_client", 2, "t.zero_window_time > 0", None),
+    ("delayed_ack", 3, "t.delayed_ack_time > 0", None),
+    ("queueing", 3, "t.queue_time > 0", None),
+    ("network", 3, "t.cause = 'network'", None),
+    ("small_mss", 3, None, "c.mss < 1200"),
 ]
+META_ISSUES = (("slow_dns", 3), ("frag_needed", 2), ("ip_fragments", 3), ("slow_backend", 2))
 ISSUE_LIMIT = 200
+
+
+def percentile(values, q):
+    """Value at share q of a sorted list, with the same interpolation as quantile_cont in the reports."""
+    place = (len(values) - 1) * q
+    low, high = math.floor(place), math.ceil(place)
+    return values[low] + (values[high] - values[low]) * (place - low)
+
+
+def issue_keys():
+    return [i[0] for i in ISSUES] + [k for k, _ in META_ISSUES]
 
 
 def issues(db, meta):
     """Curated problems, most serious first. Each says what to look at next."""
     found = []
-    for key, title, why, severity, tsql, csql in ISSUES:
+    for key, severity, tsql, csql in ISSUES:
         table, cond = ("http_transactions t", tsql) if tsql else ("tcp_connections c", csql)
         n = db.execute(f"SELECT count(*) FROM {table} WHERE {cond}").fetchone()[0]
         if n:
-            found.append(dict(key=key, title=title, why=why, count=n, severity=severity, drill=True))
-    dns = db.execute("SELECT count(*) FROM dns_queries WHERE duration > 0.1").fetchone()[0]
-    for key, title, why, severity, n in (
-            ("slow_dns", "Slow DNS answers", "Lookups took over 100 ms.", 3, dns),
-            ("frag_needed", "Fragmentation needed", "ICMP says packets were too big for the path.", 2, meta.get("frag_needed", 0)),
-            ("ip_fragments", "IP fragments", "Fragmented packets raise the cost of any loss.", 3, meta.get("ip_fragments", 0))):
-        if n:
-            found.append(dict(key=key, title=title, why=why, count=n, severity=severity, drill=False))
+            found.append(dict(knowledge.issue(key), count=n, severity=severity, drill=True))
+    counts = dict(slow_dns=db.execute("SELECT count(*) FROM dns_queries WHERE duration > 0.1").fetchone()[0],
+                  frag_needed=meta.get("frag_needed", 0), ip_fragments=meta.get("ip_fragments", 0),
+                  slow_backend=sum(bool(b["flag"]) for b in backends(db)))
+    for key, severity in META_ISSUES:
+        if counts[key]:
+            found.append(dict(knowledge.issue(key), count=counts[key], severity=severity, drill=False))
     return sorted(found, key=lambda x: (x["severity"], -x["count"]))
 
 
@@ -231,17 +344,20 @@ def issue_detail(db, key):
     row = next((i for i in ISSUES if i[0] == key), None)
     if row is None:
         return None
-    _, title, why, _, tsql, csql = row
+    _, _, tsql, csql = row
     if tsql:
         txns = slowest(db, tsql, [], ISSUE_LIMIT)
         conns = []
     else:
         conns = rows(db, f"SELECT * FROM tcp_connections c WHERE {csql} ORDER BY c.stream LIMIT ?", [ISSUE_LIMIT])
         txns = slowest(db, csql, [], ISSUE_LIMIT)
-    return dict(key=key, title=title, why=why, transactions=txns, connections=conns)
+    for c in conns:
+        c["rst_note"] = knowledge.reset_note(c.get("rst_code"))
+    about = knowledge.issue(key)
+    return dict(about, transactions=txns, connections=conns, guide=knowledge.guide(about["topic"]))
 
 
 def time_budget(db):
     """Total seconds spent in each phase, across all requests."""
     t = one(db, f"""SELECT {', '.join(f'sum({p}) AS {p}' for p in causes.PHASES)} FROM http_transactions""")
-    return [dict(name=k, label=causes.PHASE_LABELS[k], seconds=v) for k, v in t.items() if v]
+    return [knowledge.phase(k, v) for k, v in t.items() if v]

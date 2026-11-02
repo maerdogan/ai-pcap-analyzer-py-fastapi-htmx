@@ -1,19 +1,22 @@
 # Copy .env.example to .env in this folder and set a password. Port 8000 must sit behind an HTTPS proxy.
 services:
   pcap-analyzer:
-    image: pcap-analyzer:0.1.0
+    image: pcap-analyzer:0.2.0
     build:
       context: ..
       dockerfile: docker/Containerfile
     restart: unless-stopped
     ports:
-      - "127.0.0.1:8000:8000"
+      - "127.0.0.1:${PCAP_ANALYZER_PORT:-8000}:8000"
     env_file: .env
     volumes:
       - pcap-data:/data
     tmpfs:
-      - /tmp
+      - /tmp:size=1g
     read_only: true
+    cpus: 2
+    mem_limit: 2g
+    pids_limit: 256
     cap_drop:
       - ALL
     security_opt:

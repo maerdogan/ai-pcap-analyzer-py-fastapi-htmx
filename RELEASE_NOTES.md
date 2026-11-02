@@ -2,6 +2,48 @@
 
 All changes made on the same day are one minor version.
 
+## 0.2.0 (2026-11-02)
+
+### Added
+
+- Interface in Turkish, English, German and Spanish. Turkish is the default, and each user can choose another language. Reports and exported column titles follow the choice.
+- Bundled knowledge base for explanations. Each cause and issue says what it means, what this capture shows, what to check next and which sources back it. No AI model or outside service is used.
+- Capture trust summary: high, medium or low, with the reasons, such as packets the capture missed, one-way traffic or connections cut at either end.
+- Load balancer effect from its two sides: median and 95th percentile of added time per URL, kept apart from service time, with match rate and confidence.
+- Servers tab with each backend's requests, times, errors and resets. A server out of line with its peers is marked and raises an issue.
+- Traffic over time: requests, errors, 95th percentile, retransmissions and open connections. A period chosen on the chart narrows the Inspect tables.
+- Capture guide with ready commands for Linux servers, pods and worker nodes.
+- Time limit for each analysis and a cancel button. A stopped analysis leaves no files behind and frees its slot for the next one.
+- NetScaler reset reason read from the window field of an RST packet, shown when the value is a documented code.
+- VXLAN, Geneve and IP-in-IP traffic shows the addresses inside the tunnel.
+- `tools/lab.py`: real Linux traffic with known delays, captured without root in network namespaces. The tests compare the results with those delays and with tshark.
+- Form tokens tied to the session on everything that changes data. A page from a sibling subdomain can no longer sign you out or delete an analysis.
+- HSTS whenever HTTPS is on, with `PCAP_ANALYZER_HSTS_S` to change or end it.
+- `NetworkPolicy` in `kubernetes/generic`: only the ingress controller reaches the app, and the pod has no way out.
+- CPU, memory and process limits in the Compose file and the systemd unit, and a tighter sandbox in the unit.
+- `tools/smoke.py` walks through a running install from sign-in to deletion. `tools/check_install.sh` follows the install guide and runs that walk, and CI does this for Compose, systemd and the Linux folder on three old distributions.
+- Release workflow: a `v*` tag runs all tests and install checks, then publishes the image to GitHub Container Registry and a GitHub Release with the image file, the wheel and checksums.
+- `PCAP_ANALYZER_LANGUAGE`, `PCAP_ANALYZER_KNOWLEDGE` and `PCAP_ANALYZER_ANALYSIS_TIMEOUT_S`.
+
+### Changed
+
+- New interface: a blue top bar with the views of a capture, a strip of recent captures, a URL search and two-column pages. Each capture, connection and request opens with a scoreboard, and Compare shows the two captures side by side. Errors in Traffic over time now hang below the axis.
+- `linux-glibc2.26-server` runs the application from `src/`, so a code update needs no new bundle. Keep the folder next to `src/`.
+- All cause, issue, phase, warning and interface text moved to `knowledge/`. `tools/build_knowledge.py` checks it and builds `knowledge.bin`.
+- A slow service explanation no longer rules out the network when the capture is not next to the server.
+- Requests without a shared ID are matched in two passes, which holds up better when the capture clocks differ.
+- Security headers are now on every answer, also on redirects and refusals.
+- Compose takes its port from `PCAP_ANALYZER_PORT`.
+- GitHub Actions in the workflows are pinned to exact commits.
+
+### Fixed
+
+- On kept-open HTTP/1.1 connections, responses were lost when the body came in its own TCP segment without a line end, so later requests looked unanswered and the first one looked very long. Header reassembly is now off. With headers longer than one segment, the part in later segments is not read.
+- Extra copies of packets from `tcpdump -i any` looked like retransmissions and could show false packet loss. They are now removed and counted.
+- With shared request IDs, the delay toward B was shown as zero and the whole delay as the way back. Both directions are now estimated, and the total added time is unchanged.
+- ICMP errors that quote a TCP header no longer count as packets of that connection.
+- The systemd steps in the install guide were missing `sudo`, the rights on the certificate files and `daemon-reload`. The guide also had no way to create a password hash on a host with only the image.
+
 ## 0.1.0 (2026-11-01)
 
 ### Added

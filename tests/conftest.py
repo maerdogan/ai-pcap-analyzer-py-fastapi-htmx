@@ -5,9 +5,17 @@ from pathlib import Path
 
 import pytest
 
+from pcap_analyzer import knowledge
 from pcap_analyzer.config import Settings
 
 ROOT = Path(__file__).resolve().parent.parent
+
+
+@pytest.fixture(autouse=True)
+def english(monkeypatch):
+    """Most tests read English text. Tests of other languages set their own."""
+    monkeypatch.setenv("PCAP_ANALYZER_LANGUAGE", "en")
+    knowledge.set_language(None)
 
 
 @pytest.fixture(scope="session")

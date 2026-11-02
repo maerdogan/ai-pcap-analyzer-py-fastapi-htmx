@@ -3,15 +3,42 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_call:
+
+permissions:
+  contents: read
 
 jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
         with:
           python-version: "3.13"
       - run: sudo apt-get update && sudo apt-get install -y tshark
       - run: pip install -e ".[dev]"
+      - run: python tools/build_knowledge.py --check
       - run: pytest
+
+  install:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        check:
+          - compose
+          - systemd
+          - bundle ubuntu:18.04
+          - bundle rockylinux:8
+          - bundle opensuse/leap:15.0
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - run: sudo apt-get update && sudo apt-get install -y tshark python3-venv
+      - run: tools/check_install.sh $CHECK
+        env:
+          CHECK: ${{ matrix.check }}

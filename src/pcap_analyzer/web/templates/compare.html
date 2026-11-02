@@ -1,92 +1,104 @@
 {% extends "base.html" %}
-{% import "_macros.html" as ui %}
-{% block title %}Compare captures{% endblock %}
+{% import "_macros.html" as ui with context %}
+{% block title %}{{ _("Compare captures") }}{% endblock %}
 {% block main %}
-<header class="page-head"><div><h1>Compare captures</h1><p class="muted">See what changed between two captures, or how the same traffic looks at two points.</p></div></header>
+<header class="page-head"><div><h1>{{ _("Compare captures") }}</h1><p class="muted">{{ _("See what changed between two captures, or how the same traffic looks at two points.") }}</p></div></header>
 {% if analyses | length < 2 %}
-<p class="empty">Analyze at least two captures first. They will appear here. <a href="/">Go to your captures</a></p>
+<p class="empty">{{ _("Analyze at least two captures first. They will appear here.") }} <a href="/">{{ _("Go to your captures") }}</a></p>
 {% else %}
 <section class="panel">
 <form method="get" action="/compare">
   <div class="compare-pick">
-    {% for side, name in [("a", "Capture A"), ("b", "Capture B")] %}
+    {% for side, name in [("a", _("Capture A")), ("b", _("Capture B"))] %}
     <fieldset>
       <legend>{{ name }}</legend>
-      <label>Capture
+      <label>{{ _("Capture") }}
         <select name="{{ side }}" required>
-          <option value="">Choose a capture</option>
+          <option value="">{{ _("Choose a capture") }}</option>
           {% for m in analyses %}<option value="{{ m.id }}" {% if q[side] == m.id %}selected{% endif %}>{{ m.filename }} ({{ m.created | when }})</option>{% endfor %}
         </select>
       </label>
       <div class="fields">
-        <label>Source IP <input name="src_{{ side }}" value="{{ q['src_' ~ side] or '' }}"></label>
-        <label>Destination IP <input name="dst_{{ side }}" value="{{ q['dst_' ~ side] or '' }}"></label>
-        <label>Destination port <input name="port_{{ side }}" inputmode="numeric" value="{{ q['port_' ~ side] or '' }}"></label>
-        <label>URL contains <input name="url_{{ side }}" value="{{ q['url_' ~ side] or '' }}"></label>
+        <label>{{ _("Source IP") }} <input name="src_{{ side }}" value="{{ q['src_' ~ side] or '' }}"></label>
+        <label>{{ _("Destination IP") }} <input name="dst_{{ side }}" value="{{ q['dst_' ~ side] or '' }}"></label>
+        <label>{{ _("Destination port") }} <input name="port_{{ side }}" inputmode="numeric" value="{{ q['port_' ~ side] or '' }}"></label>
+        <label>{{ _("URL contains") }} <input name="url_{{ side }}" value="{{ q['url_' ~ side] or '' }}"></label>
       </div>
     </fieldset>
     {% endfor %}
   </div>
-  <p class="hint">Filters left empty on B use the values of A. Fill B when addresses differ, for example before and after NAT.</p>
-  <label class="check"><input type="radio" name="mode" value="captures" {% if q.mode != "points" %}checked{% endif %}> Before and after: compare the two as a whole</label>
-  <label class="check"><input type="radio" name="mode" value="points" {% if q.mode == "points" %}checked{% endif %}> Same traffic at two points: match each request. A is nearer the client</label>
-  <button class="primary">Compare</button>
+  <p class="hint">{{ _("Filters left empty on B use the values of A. Fill B when addresses differ, for example before and after NAT.") }}</p>
+  <label class="check"><input type="radio" name="mode" value="captures" {% if q.mode != "points" %}checked{% endif %}> {{ _("Before and after: compare the two as a whole") }}</label>
+  <label class="check"><input type="radio" name="mode" value="points" {% if q.mode == "points" %}checked{% endif %}> {{ _("Same traffic at two points: match each request. A is nearer the client") }}</label>
+  <button class="primary">{{ _("Compare") }}</button>
 </form>
 </section>
 {% endif %}
 
 {% if result %}
 {% for n in result.notes %}<p class="warn">{{ n }}</p>{% endfor %}
-<section>
-  <h2>Summary</h2>
+{% set p95 = result.summary | selectattr("key", "eq", "p95_total") | first %}
+<header class="hero">
+  <div class="score ends">
+    <div class="score-side pick-a"><small>{{ _("Capture A") }}</small><b>{{ a.meta.filename }}</b></div>
+    <div class="score-mid"><strong><span>{{ p95.a | seconds }}</span><i>–</i><span>{{ p95.b | seconds }}</span></strong><small>{{ p95.label }}</small></div>
+    <div class="score-side pick-b"><small>{{ _("Capture B") }}</small><b>{{ b.meta.filename }}</b></div>
+  </div>
+</header>
+<div class="columns even">
+  <section class="panel"><h2>{{ _("Summary") }}</h2>{{ ui.duel(result.summary) }}</section>
+  <section class="panel"><h2>{{ _("Average time per phase") }}</h2>{{ ui.duel(result.phases) }}</section>
+</div>
+<section class="panel flush">
+  <h2>{{ _("By URL, largest change first") }}</h2>
   <div class="table-wrap"><table>
-    <thead><tr><th>Measure</th><th class="num">A</th><th class="num">B</th><th class="num">Change</th><th class="num">%</th></tr></thead>
-    <tbody>{% for s in result.summary %}
-      <tr><td>{{ s.label }}</td>
-      <td class="num">{{ (s.a | seconds) if s.is_time else (s.a if s.a is not none else "–") }}</td>
-      <td class="num">{{ (s.b | seconds) if s.is_time else (s.b if s.b is not none else "–") }}</td>
-      <td class="num {{ 'up' if s.delta and s.delta > 0 else 'down' if s.delta and s.delta < 0 else '' }}">{% if s.delta is none %}–{% elif s.is_time %}{{ "+" if s.delta > 0 else "" }}{{ (s.delta * 1000) | round(1) }} ms{% else %}{{ "+" if s.delta > 0 else "" }}{{ s.delta }}{% endif %}</td>
-      <td class="num">{{ ("%+.0f%%" | format(s.percent)) if s.percent is not none else "–" }}</td></tr>
-    {% endfor %}</tbody>
-  </table></div>
-</section>
-<section>
-  <h2>Average time per phase</h2>
-  <div class="table-wrap"><table>
-    <thead><tr><th>Phase</th><th class="num">A</th><th class="num">B</th><th class="num">Change</th></tr></thead>
-    <tbody>{% for p in result.phases %}
-      <tr><td>{{ p.name | replace("_clean", "") | replace("_time", "") | replace("_", " ") | capitalize }}</td><td class="num">{{ p.a | seconds }}</td><td class="num">{{ p.b | seconds }}</td>
-      <td class="num {{ 'up' if p.delta and p.delta > 0 else 'down' if p.delta and p.delta < 0 else '' }}">{% if p.delta is none %}–{% else %}{{ "+" if p.delta > 0 else "" }}{{ (p.delta * 1000) | round(1) }} ms{% endif %}</td></tr>
-    {% endfor %}</tbody>
-  </table></div>
-</section>
-<section>
-  <h2>By URL, largest change first</h2>
-  <div class="table-wrap"><table>
-    <thead><tr><th>Method</th><th>URL</th><th class="num">Requests A</th><th class="num">Requests B</th><th class="num">Failed A</th><th class="num">Failed B</th><th class="num">Average A</th><th class="num">Average B</th><th class="num">Change</th></tr></thead>
+    <thead><tr><th>{{ _("Method") }}</th><th>URL</th><th class="num">{{ _("Requests") }} A</th><th class="num">{{ _("Requests") }} B</th><th class="num">{{ _("Failed") }} A</th><th class="num">{{ _("Failed") }} B</th><th class="num">{{ _("Average") }} A</th><th class="num">{{ _("Average") }} B</th><th class="num">{{ _("Change") }}</th></tr></thead>
     <tbody>{% for u in result.urls %}
-      <tr><td>{{ u.method }}</td><td>{{ u.url }}{% if u.only_in %} <span class="hint">only in {{ u.only_in }}</span>{% elif u.few %} <span class="hint">few samples</span>{% endif %}</td>
+      <tr><td>{{ u.method }}</td><td>{{ u.url }}{% if u.only_in %} <span class="hint">{{ _("only in {side}", side=u.only_in) }}</span>{% elif u.few %} <span class="hint">{{ _("few samples") }}</span>{% endif %}</td>
       <td class="num">{{ u.requests_a or 0 }}</td><td class="num">{{ u.requests_b or 0 }}</td><td class="num">{{ u.failed_a or 0 }}</td><td class="num">{{ u.failed_b or 0 }}</td>
       <td class="num">{{ u.avg_a | seconds }}</td><td class="num">{{ u.avg_b | seconds }}</td>
       <td class="num {{ 'up' if u.delta and u.delta > 0 else 'down' if u.delta and u.delta < 0 else '' }}">{% if u.delta is none %}–{% else %}{{ "+" if u.delta > 0 else "" }}{{ (u.delta * 1000) | round(1) }} ms{% endif %}</td></tr>
     {% endfor %}</tbody>
   </table></div>
 </section>
-<section class="panel flush"><h2>Slowest in A</h2>{{ ui.waterfall(result.slowest_a[:5], a) }}</section>
-<section class="panel flush"><h2>Slowest in B</h2>{{ ui.waterfall(result.slowest_b[:5], b) }}</section>
+<section class="panel flush"><h2>{{ _("Slowest in A") }}</h2>{{ ui.waterfall(result.slowest_a[:5], a) }}</section>
+<section class="panel flush"><h2>{{ _("Slowest in B") }}</h2>{{ ui.waterfall(result.slowest_b[:5], b) }}</section>
 {% endif %}
 
 {% if points %}
-<section>
-  <h2>Same requests at two points</h2>
-  <p>{{ points.exact }} matched by request ID, {{ points.likely }} by URL and time. {{ points.unmatched_a }} in A and {{ points.unmatched_b }} in B have no match.</p>
-  {% if points.clock_known %}<p class="hint">Clock difference between the captures, taken from exact matches: {{ (points.clock_offset * 1000) | round(1) }} ms.</p>
-  {% else %}<p class="warn">No shared request IDs, so the two clocks are assumed to agree. Delays between the points are only as good as that assumption.</p>{% endif %}
+{% if points.reversed %}<p class="warn">{{ _("B takes longer than A, so the captures may be swapped. A must be the point nearer the client.") }}</p>{% endif %}
+<section class="panel">
+  <h2>{{ _("What the path between the points added") }}</h2>
+  <dl class="metrics">
+    <div><dt>{{ _("Added, median") }}</dt><dd>{{ points.added | seconds }}</dd></div>
+    <div><dt>{{ _("Added, 95th percentile") }}</dt><dd>{{ points.added_p95 | seconds }}</dd></div>
+    <div><dt>{{ _("Service seen at B") }}</dt><dd>{{ points.service | seconds }}</dd></div>
+    <div><dt>{{ _("Requests matched") }}</dt><dd>{{ _("{n}%", n="%.0f" | format(points.match_rate * 100)) }}</dd></div>
+    <div class="trust-{{ {'high': 'high', 'medium': 'medium', 'low': 'low'}[points.confidence] }}"><dt>{{ _("Match confidence") }}</dt><dd>{{ _({"high": "High", "medium": "Medium", "low": "Low"}[points.confidence]) }}</dd></div>
+  </dl>
+  <p class="hint">{{ _("The added time covers NetScaler and the network between the two points. Captures cannot separate those two. It does not depend on the capture clocks.") }}</p>
+  <p>{{ _("{exact} matched by request ID, {likely} by URL and time. {a} in A and {b} in B have no match.", exact=points.exact, likely=points.likely, a=points.unmatched_a, b=points.unmatched_b) }}</p>
+  {% if not points.exact %}<p class="warn">{{ _("No shared request IDs, so requests are matched by URL and time. On busy URLs some pairs can be wrong. {n} matches had more than one candidate.", n=points.unclear) }}</p>{% endif %}
+</section>
+{% if points.urls %}
+<section class="panel flush">
+  <h2>{{ _("By URL, largest added time first") }}</h2>
+  <div class="table-wrap"><table>
+    <thead><tr><th>{{ _("Method") }}</th><th>URL</th><th class="num">{{ _("Requests") }}</th><th class="num">{{ _("Total at A") }}</th><th class="num">{{ _("Added, median") }}</th><th class="num">{{ _("Added, 95th percentile") }}</th><th class="num">{{ _("Service seen at B") }}</th></tr></thead>
+    <tbody>{% for u in points.urls %}
+      <tr><td>{{ u.method }}</td><td>{{ u.url }}</td><td class="num">{{ u.requests }}</td><td class="num">{{ u.total | seconds }}</td><td class="num">{{ u.added | seconds }}</td><td class="num">{{ u.added_p95 | seconds }}</td><td class="num">{{ u.service | seconds }}</td></tr>
+    {% endfor %}</tbody>
+  </table></div>
+</section>
+{% endif %}
+<section class="panel flush">
+  <h2>{{ _("Same requests at two points") }}</h2>
+  <p class="hint">{{ _("The split into two directions is an estimate. It takes the fastest trip each way as equal to remove the clock difference of {ms} ms.", ms=((points.clock_skew * 1000) | round(1))) }}</p>
   {% if points.rows %}
   <div class="table-wrap"><table>
-    <thead><tr><th>Match</th><th>Request</th><th class="num">Status</th><th class="num">Total at A</th><th class="num">Total at B</th><th class="num">Added between points</th><th class="num">Delay toward B</th><th class="num">Delay back</th></tr></thead>
+    <thead><tr><th>{{ _("Match") }}</th><th>{{ _("Request") }}</th><th class="num">{{ _("Status") }}</th><th class="num">{{ _("Total at A") }}</th><th class="num">{{ _("Total at B") }}</th><th class="num">{{ _("Added between points") }}</th><th class="num">{{ _("Delay toward B") }}</th><th class="num">{{ _("Delay back") }}</th></tr></thead>
     <tbody>{% for r in points.rows %}
-      <tr><td>{{ r.match | capitalize }}</td><td><a href="/a/{{ a.id }}/txn/{{ r.id_a }}">{{ r.method }} {{ r.uri | truncate(60, True, "…") }}</a></td><td class="num">{{ r.status or "–" }}</td>
+      <tr><td>{{ _({"exact": "Exact", "likely": "Likely"}[r.match]) }}</td><td><a href="/a/{{ a.id }}/txn/{{ r.id_a }}">{{ r.method }} {{ r.uri | truncate(60, True, "…") }}</a></td><td class="num">{{ r.status or "–" }}</td>
       <td class="num">{{ r.total_a | seconds }}</td><td class="num">{{ r.total_b | seconds }}</td><td class="num">{{ r.added | seconds }}</td><td class="num">{{ r.forward | seconds }}</td><td class="num">{{ r.back | seconds }}</td></tr>
     {% endfor %}</tbody>
   </table></div>

@@ -1,27 +1,31 @@
 {% extends "base.html" %}
-{% import "_macros.html" as ui %}
+{% import "_macros.html" as ui with context %}
 {% block title %}{{ m.filename }}{% endblock %}
 {% block capture_nav %}{{ ui.capnav(a, tab, issue_count) }}{% endblock %}
 {% block main %}
-<header class="page-head">
-  <div>
-    <h1>{{ tabs[tab] }}</h1>
-    <p class="muted">{{ m.filename }}, {{ m.size | size }}, {{ m.packets }} packets. Captured {{ m.capture_start | when }}.</p>
+{{ ui.crumbs([(_("Captures"), "/"), (m.filename, "/a/" ~ a.id), (_(tab_labels[tab]), None)]) }}
+<header class="hero">
+  <div class="hero-head">
+    <div>
+      <h1>{{ _(tab_labels[tab]) }}</h1>
+      <p class="muted">{{ _("{file}, {size}, {packets} packets. Captured {when}.", file=m.filename, size=m.size | size, packets=m.packets, when=m.capture_start | when) }}</p>
+    </div>
+    <div class="actions">
+      <details class="menu">
+        <summary>{{ _("Download") }}</summary>
+        <div class="menu-body">
+          <a href="/export/{{ a.id }}/report.html">{{ _("Full report (HTML)") }}</a>
+          <table>
+            {% for n, l in [("requests", _("Requests")), ("urls", _("URLs")), ("connections", _("Connections")), ("hosts", _("Hosts")), ("issues", _("Issues"))] %}
+            <tr><td>{{ l }}</td><td><a href="/export/{{ a.id }}/{{ n }}.csv" aria-label="{{ l }} CSV">CSV</a></td><td><a href="/export/{{ a.id }}/{{ n }}.xlsx" aria-label="{{ l }} Excel">Excel</a></td><td><a href="/export/{{ a.id }}/{{ n }}.json" aria-label="{{ l }} JSON">JSON</a></td></tr>
+            {% endfor %}
+          </table>
+        </div>
+      </details>
+      <a class="button primary" href="/a/{{ a.id }}/inspect">{{ _("Inspect traffic") }}</a>
+    </div>
   </div>
-  <div class="actions">
-    <details class="menu">
-      <summary>Download</summary>
-      <div class="menu-body">
-        <a href="/export/{{ a.id }}/report.html">Full report (HTML)</a>
-        <table>
-          {% for n, l in [("requests", "Requests"), ("urls", "URLs"), ("connections", "Connections"), ("hosts", "Hosts"), ("issues", "Issues")] %}
-          <tr><td>{{ l }}</td><td><a href="/export/{{ a.id }}/{{ n }}.csv" aria-label="{{ l }} as CSV">CSV</a></td><td><a href="/export/{{ a.id }}/{{ n }}.xlsx" aria-label="{{ l }} as Excel">Excel</a></td><td><a href="/export/{{ a.id }}/{{ n }}.json" aria-label="{{ l }} as JSON">JSON</a></td></tr>
-          {% endfor %}
-        </table>
-      </div>
-    </details>
-    <a class="button primary" href="/a/{{ a.id }}/inspect">Inspect traffic</a>
-  </div>
+  {% if tab == "overview" and o.http.requests %}{{ ui.score(o.http) }}{{ ui.stats(o.http, True) }}{% endif %}
 </header>
 <div id="tab">{% include "_tab_" ~ tab ~ ".html" %}</div>
 {% endblock %}

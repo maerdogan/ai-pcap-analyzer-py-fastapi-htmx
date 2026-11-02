@@ -1,7 +1,10 @@
 {% if job.state == "failed" %}
-<p class="error" role="alert">{{ job.filename }} could not be analyzed: {{ job.error }}</p>
+<p class="error" role="alert">{{ _("{name} could not be analyzed: {reason}", name=job.filename, reason=job.error) }}</p>
+{% elif job.state == "cancelled" %}
+<p class="warn">{{ _("The analysis of {name} was cancelled.", name=job.filename) }}</p>
 {% else %}
-<p class="working" hx-get="/jobs/{{ job.id }}" hx-trigger="load delay:700ms" hx-swap="outerHTML">
-  {{ "Waiting for a free slot" if job.state == "waiting" else "Analyzing" }} {{ job.filename }}
-</p>
+<div class="working" hx-get="/jobs/{{ job.id }}" hx-trigger="load delay:700ms" hx-swap="outerHTML">
+  <span>{{ _("Waiting for a free slot: {name}", name=job.filename) if job.state == "waiting" else _("Analyzing {name}", name=job.filename) }}</span>
+  <button class="link danger" hx-post="/jobs/{{ job.id }}/cancel" hx-target="closest .working" hx-swap="outerHTML">{{ _("Cancel") }}</button>
+</div>
 {% endif %}

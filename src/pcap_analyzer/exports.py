@@ -5,7 +5,7 @@ import json
 
 from openpyxl import Workbook
 
-from . import reports
+from . import knowledge, reports
 
 REQUEST_COLUMNS = ("id, stream, method, uri, url_template, host, http_version, status, answered, req_frame, resp_frame, connect_time, tls_time, "
                    "request_send, wait, service, ttfb, transfer, total, network, queue_time, retrans_count, retrans_time, zero_window_time, "
@@ -21,7 +21,7 @@ def table(db, name, meta):
     if name == "urls":
         got = reports.url_groups(db)
         for g in got:
-            g["statuses"] = ", ".join(f"{s['status'] or 'none'} x{s['requests']}" for s in g["statuses"])
+            g["statuses"] = ", ".join(f"{s['status'] or knowledge.t('none')} x{s['requests']}" for s in g["statuses"])
         return got
     if name == "connections":
         return reports.connections(db)
@@ -49,14 +49,14 @@ def render(rows, fmt):
     if fmt == "csv":
         out = io.StringIO()
         w = csv.writer(out)
-        w.writerow(cols)
+        w.writerow([knowledge.column(c) for c in cols])
         for r in rows:
             w.writerow([_safe(r[c]) for c in cols])
         return ("﻿" + out.getvalue()).encode()  # BOM so Excel reads UTF-8
     if fmt == "xlsx":
         wb = Workbook()
         ws = wb.active
-        ws.append(cols)
+        ws.append([knowledge.column(c) for c in cols])
         for r in rows:
             ws.append([_safe(r[c]) if not isinstance(r[c], (list, dict)) else str(r[c]) for c in cols])
         out = io.BytesIO()

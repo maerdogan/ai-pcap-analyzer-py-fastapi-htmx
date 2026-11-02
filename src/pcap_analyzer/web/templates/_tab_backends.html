@@ -1,0 +1,10 @@
+{% if backends %}
+{% if backends | length < 2 %}<p class="hint">{{ _("Only one server is visible here. To compare servers, capture behind the load balancer.") }}</p>{% endif %}
+<div class="table-wrap"><table>
+  <thead><tr><th>{{ _("Server") }}</th><th>{{ _("Compared with the others") }}</th><th class="num">{{ _("Connections") }}</th><th class="num">{{ _("Requests") }}</th><th class="num">{{ _("Failed") }}</th><th class="num">{{ _("Median") }}</th><th class="num">{{ _("95th percentile") }}</th><th class="num">{{ _("Median service") }}</th><th class="num">{{ _("Resets") }}</th><th class="num">{{ _("Retransmissions") }}</th></tr></thead>
+  <tbody>{% for b in backends %}
+    <tr {% if b.flag %}class="flagged"{% endif %}><td><a href="/a/{{ a.id }}/inspect?dst={{ b.server_ip | urlencode }}&amp;port={{ b.server_port }}">{{ b.server_ip }}:{{ b.server_port }}</a></td><td>{% if b.flag == "slow" %}<b>{{ _("Slower than the others") }}</b>{% elif b.flag == "errors" %}<b>{{ _("More errors than the others") }}</b>{% else %}{{ _("Normal") }}{% endif %}</td><td class="num">{{ b.connections }}</td><td class="num">{{ b.requests }}</td><td class="num">{{ b.failed }}</td><td class="num">{{ b.p50_total | seconds }}</td><td class="num">{{ b.p95_total | seconds }}</td><td class="num">{{ b.p50_service | seconds }}</td><td class="num">{{ b.resets }}</td><td class="num">{{ b.retransmissions or 0 }}</td></tr>
+  {% endfor %}</tbody>
+</table></div>
+<p class="hint">{{ _("Servers on the same port are compared, and each needs at least 5 requests. Different URLs can explain a difference, so open a server to check.") }}</p>
+{% else %}<p class="empty">{{ _("No HTTP requests were found, so there are no servers to compare.") }}</p>{% endif %}

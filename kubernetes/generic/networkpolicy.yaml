@@ -1,0 +1,21 @@
+# Only the ingress controller reaches port 8000. The app opens no connections, so the pod gets no way out.
+# Works only where the network plugin enforces policies. If your controller is not in the namespace
+# ingress-nginx, change the name below or the app becomes unreachable.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: pcap-analyzer
+  namespace: pcap-analyzer
+spec:
+  podSelector:
+    matchLabels:
+      app: pcap-analyzer
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ingress-nginx
+      ports:
+        - protocol: TCP
+          port: 8000

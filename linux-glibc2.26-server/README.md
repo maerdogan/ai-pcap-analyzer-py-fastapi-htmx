@@ -2,13 +2,13 @@
 
 Run pcap-analyzer on a Linux server as a normal user. You do not need sudo, Docker, systemd or internet access. Read the [security section](../README.md#security) first.
 
-The server needs Linux x86_64 with glibc 2.26 or newer, `tar` and `gzip`. CentOS 7 and RHEL 7 are too old. `bundle/` includes Python 3.13, every Python package and tshark 4.6, so you do not install them.
+The server needs Linux x86_64 with glibc 2.26 or newer, `tar` and `gzip`. CentOS 7 and RHEL 7 are too old. `bundle/` includes Python 3.13, every Python package and tshark 4.6, so you do not install them. The application itself runs from `../src`.
 
-Tested with Ubuntu 18.04, Rocky Linux 8 and openSUSE Leap 15.0, in containers without network access. The folder must not be on a disk mounted with `noexec`.
+Tested from sign-in to deletion with Ubuntu 18.04, Rocky Linux 8 and openSUSE Leap 15.0, as a normal user in containers without network access, but not yet on a real server of that age. The folder must not be on a disk mounted with `noexec`.
 
 ## Start
 
-Copy this folder to the server, then run:
+Copy the repository to the server, keeping this folder next to `src/`, then run:
 
 ```bash
 ./run.sh password
@@ -42,11 +42,15 @@ PCAP_ANALYZER_CERT=/home/you/cert.pem
 PCAP_ANALYZER_KEY=/home/you/key.pem
 ```
 
-Limit the port to your team's network with a firewall. The app does not start again after a server reboot, so you need to run `./run.sh start` again.
+Limit the port to your team's network with a firewall. The app does not start again after a server reboot, so you need to run `./run.sh start` again. This folder sets no CPU or memory limit, because that needs root.
+
+## Update
+
+Replace `src/` with the new version and run `./run.sh restart`. No new bundle is needed.
 
 ## Rebuild the bundle
 
-Run this on a Linux x86_64 machine with internet after changing the code, because the app in `bundle/` does not follow the source:
+Run this on a Linux x86_64 machine with internet only when Python, a Python package or tshark changes:
 
 ```bash
 ./build-bundle.sh

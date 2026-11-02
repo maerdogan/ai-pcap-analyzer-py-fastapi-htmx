@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Build bundle/ on a Linux x86_64 machine with internet. Needs curl, tar and sha256sum, but not sudo.
-# The bundle holds Python, the Python packages, this application and tshark.
+# The bundle holds Python, the Python packages and tshark. The application runs from ../src, so it is not in here.
+# Build again only when a Python package, Python or tshark changes.
 set -euo pipefail
 trap 'echo "error: build-bundle.sh stopped at line $LINENO with status $?" >&2' ERR
 
@@ -15,7 +16,7 @@ PART_SIZE=45m # GitHub warns about files over 50 MB
 WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
 OUT=$WORK/out/runtime
-mkdir -p "$OUT/tshark/bin" "$OUT/tshark/lib" "$OUT/tshark/share" "$WORK/src"
+mkdir -p "$OUT/tshark/bin" "$OUT/tshark/lib" "$OUT/tshark/share"
 
 echo "Downloading Python $PYTHON..."
 file=cpython-$PYTHON+$PBS_TAG-x86_64-unknown-linux-gnu-install_only_stripped.tar.gz
@@ -25,9 +26,13 @@ curl -fsSL -o "$WORK/SHA256SUMS" "$base/SHA256SUMS"
 (cd "$WORK" && grep " $file\$" SHA256SUMS | sha256sum -c -)
 tar xzf "$WORK/$file" -C "$OUT"
 
-echo "Installing the application and Python packages..."
-cp -r "$ROOT/pyproject.toml" "$ROOT/README.md" "$ROOT/LICENSE" "$ROOT/src" "$WORK/src/"
-"$OUT/python/bin/python3" -m pip install -q --no-warn-script-location "duckdb==$DUCKDB" "$WORK/src"
+echo "Installing the Python packages..."
+"$OUT/python/bin/python3" -c '
+import sys, tomllib
+for dep in tomllib.load(open(sys.argv[1], "rb"))["project"]["dependencies"]:
+    if not dep.startswith("duckdb"):
+        print(dep)' "$ROOT/pyproject.toml" >"$WORK/requirements.txt"
+"$OUT/python/bin/python3" -m pip install -q --no-warn-script-location "duckdb==$DUCKDB" -r "$WORK/requirements.txt"
 
 echo "Installing tshark..."
 T=$WORK/alpine
@@ -55,10 +60,10 @@ mkdir "$WORK/moved"
 cp -r "$OUT" "$WORK/moved/runtime"
 TEST=$WORK/moved/runtime
 env -i PATH="$TEST/tshark/bin:/usr/bin:/bin" WIRESHARK_DATA_DIR="$TEST/tshark/share/wireshark" tshark --version | head -1
-env -i "$TEST/python/bin/python3" -c "import duckdb, fastapi, openpyxl, uvicorn, pcap_analyzer.cli; print('duckdb', duckdb.__version__)"
+env -i PYTHONPATH="$ROOT/src" "$TEST/python/bin/python3" -c "import duckdb, fastapi, openpyxl, uvicorn, pcap_analyzer.cli; print('duckdb', duckdb.__version__)"
 if [[ -f $ROOT/samples/http_scenarios.pcap ]]; then
   env -i HOME="$WORK" PATH="$TEST/tshark/bin:/usr/bin:/bin" WIRESHARK_DATA_DIR="$TEST/tshark/share/wireshark" \
-    PCAP_ANALYZER_WORKDIR="$WORK/data" "$TEST/python/bin/python3" -m pcap_analyzer.cli analyze "$ROOT/samples/http_scenarios.pcap" | head -5
+    PYTHONPATH="$ROOT/src" PCAP_ANALYZER_WORKDIR="$WORK/data" "$TEST/python/bin/python3" -m pcap_analyzer.cli analyze "$ROOT/samples/http_scenarios.pcap" | head -5
 fi
 
 echo "Writing bundle/..."

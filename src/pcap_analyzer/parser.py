@@ -13,6 +13,8 @@ RTT_INDISTINCT = 0.0005  # below this, timestamps cannot tell near from far
 BODY_PREVIEW = 2000
 DELAYED_ACK_MIN, DELAYED_ACK_MAX = 0.03, 0.5
 SEND_AFTER_ACK = 0.01
+SAME_ID_S = 0.2  # tcpdump -i any sees a packet on each interface it crosses, and a shaper can hold it between them
+NO_ID_S = 0.002  # without an IP ID, IPv6 and some stacks, only a very short gap shows a copy
 NO_BODY_METHODS = ("HEAD", "CONNECT")
 NO_BODY_STATUS = (204, 304)
 
@@ -25,6 +27,12 @@ def many(p, key):
 def first(p, key):
     v = p.get(key, "")
     return v.split(AGG, 1)[0] if v else None
+
+
+def last(p, key):
+    """The innermost value. A tunnelled packet lists its outer header first."""
+    v = p.get(key, "")
+    return v.rsplit(AGG, 1)[-1] if v else None
 
 
 def to_int(v):
@@ -114,10 +122,12 @@ class Stream:
     tls_start: Packet | None = None
     tls_end: Packet | None = None
     pending_rtt: list = field(default_factory=list)
+    rst_code: int = None
     wscale: int | None = None
     sack: bool = False
     zero_windows: list = field(default_factory=list)
     offload: bool = False
+    seen: dict = field(default_factory=dict)
 
 
 class Builder:
@@ -127,6 +137,7 @@ class Builder:
         self.dns = {}
         self.dns_rows = []
         self.total = self.tcp = self.bytes = self.truncated = self.fragments = self.frag_needed = 0
+        self.copies = self.tunnelled = 0
         self.t_first = self.t_last = None
 
     def add(self, p):
@@ -146,12 +157,14 @@ class Builder:
         if p.get("dns.time"):
             self.dns_rows.append((first(p, "dns.qry.name"), to_float(p["dns.time"]), to_int(p["frame.number"]), t))
         sid = to_int(p.get("tcp.stream"))
-        if sid is None:
+        if sid is None or p.get("icmp.type"):  # an ICMP error quotes the TCP header of another packet
             return
         self.tcp += 1
         frame = int(p["frame.number"])
-        src_ip = first(p, "ip.src") or first(p, "ipv6.src")
-        dst_ip = first(p, "ip.dst") or first(p, "ipv6.dst")
+        src_ip = last(p, "ip.src") or last(p, "ipv6.src")
+        dst_ip = last(p, "ip.dst") or last(p, "ipv6.dst")
+        if AGG in p.get("ip.src", "") + p.get("ipv6.src", ""):
+            self.tunnelled += 1
         src = (src_ip, int(p["tcp.srcport"]))
         dst = (dst_ip, int(p["tcp.dstport"]))
         s = self.streams.get(sid)
@@ -159,11 +172,16 @@ class Builder:
             s = self.streams[sid] = Stream(sid, src, dst)
         flags = to_int(p["tcp.flags"]) or 0
         payload = to_int(p["tcp.len"]) or 0
+        if self._is_copy(p, s, t, src, flags, payload):
+            self.copies += 1
+            return
         ctypes = [to_int(x) for x in many(p, "tls.record.content_type")]
         retrans = bool(p.get("tcp.analysis.retransmission") or p.get("tcp.analysis.fast_retransmission"))
         win = to_int(p.get("tcp.window_size")) or 0
         pk = Packet(frame, t, size, src, payload, flags, bool(ctypes) and all(c == TLS_ALERT for c in ctypes), retrans, win)
         s.packets.append(pk)
+        if flags & RST and s.rst_code is None:
+            s.rst_code = to_int(p.get("tcp.window_size_value")) or 0  # NetScaler writes its reset reason here
         for e in EVENTS:
             if p.get(f"tcp.analysis.{e}"):
                 self.events.append((sid, frame, t, f"{src[0]}:{src[1]}", e))
@@ -192,6 +210,15 @@ class Builder:
         self._tls(p, s, pk, src, ctypes)
         self._http1(p, s, pk, src, dst)
         self._http2(p, s, pk, src, dst)
+
+    @staticmethod
+    def _is_copy(p, s, t, src, flags, payload):
+        """True for a second view of a packet already seen. A real retransmission has a new IP ID or comes much later."""
+        ip_id = last(p, "ip.id")
+        key = (src, p.get("tcp.seq"), p.get("tcp.ack"), flags, payload, ip_id)
+        before = s.seen.get(key)
+        s.seen[key] = t
+        return before is not None and t - before <= (SAME_ID_S if to_int(ip_id) else NO_ID_S)
 
     def _tls(self, p, s, pk, src, ctypes):
         if not ctypes:
@@ -332,10 +359,10 @@ def finish_stream(s):
         rtt_server=rtt_srv, rtt_client=rtt_cli, capture_point=capture_point(rtt_srv, rtt_cli), mss=min(s.mss) if s.mss else None,
         tls_version=s.tls_version, sni=s.sni, tls_time=tls_time,
         close_type="RST" if closer and closer.flags & RST else "FIN" if closer else None,
-        closed_by=None if not closer else "client" if closer.src == client else "server",
+        closed_by=None if not closer else "client" if closer.src == client else "server", rst_code=s.rst_code or None,
         transactions=len(txns), sack=s.sack, wscale=s.wscale, min_window=min((p.win for p in s.packets if not p.flags & SYN), default=None),
         retransmissions=sum(1 for p in s.packets if p.retrans), zero_windows=len(s.zero_windows),
-        byte_ratio_db=_ratio_db(pay_c, pay_s), offload=s.offload)
+        byte_ratio_db=_ratio_db(pay_c, pay_s), offload=s.offload, one_way=len({p.src for p in s.packets}) == 1)
     _enrich(s, client, txns, conn)
     return conn, txns
 

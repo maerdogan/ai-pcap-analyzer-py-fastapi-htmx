@@ -1,6 +1,8 @@
 """Decide why a request took long and say it in plain language."""
 import re
 
+from . import knowledge
+
 SLOW_S = 0.2  # requests under this are normal, whatever their largest phase is
 PHASES = ["connect_time", "tls_time", "request_clean", "network", "queue_time", "service", "transfer_clean",
           "retrans_time", "zero_window_time", "delayed_ack_time"]
@@ -9,17 +11,11 @@ CAUSE_OF_PHASE = {
     "queue_time": "queueing", "service": "service", "transfer_clean": "transfer", "retrans_time": "loss",
     "zero_window_time": "slow_client", "delayed_ack_time": "delayed_ack",
 }
-LABELS = {
-    "normal": "Normal", "no_response": "No response", "connection_reset": "Connection reset", "truncated": "Incomplete response",
-    "gateway": "Gateway error", "service": "Slow service", "network": "Network delay", "loss": "Packet loss",
-    "slow_client": "Slow receiver", "transfer": "Data transfer", "upload": "Slow upload", "queueing": "Queued on connection",
-    "delayed_ack": "Delayed ACK", "connect": "Connection setup", "tls": "TLS handshake",
-}
-PHASE_LABELS = {
-    "connect_time": "TCP connect", "tls_time": "TLS handshake", "request_clean": "Request send", "network": "Network round trip",
-    "queue_time": "Queue on connection", "service": "Service", "transfer_clean": "Response transfer",
-    "retrans_time": "Retransmission wait", "zero_window_time": "Receiver window closed", "delayed_ack_time": "Delayed ACK wait",
-}
+CAUSES = sorted(set(CAUSE_OF_PHASE.values()) | {"normal", "no_response", "connection_reset", "truncated", "gateway"})
+ROUND_TIMEOUTS = (5, 10, 15, 30, 60, 90, 120, 180, 240, 300, 600, 900)  # seconds people set as limits
+SYN_RETRIES = (1, 3, 7, 15, 31)  # total wait when a 1 s timer doubles
+TEXT_TYPES = ("json", "text", "xml", "javascript")
+LARGE_TEXT = 100_000
 
 
 def _f(v):
@@ -73,38 +69,35 @@ def classify(t, conn):
     return CAUSE_OF_PHASE[top], share, flags
 
 
-def _ms(s):
-    return f"{s * 1000:.0f} ms" if s < 1 else f"{s:.2f} s"
+def _near(value, targets, share):
+    """The target a value sits on, allowing a share of it or 100 ms."""
+    if value is None:
+        return None
+    return next((x for x in targets if abs(value - x) <= max(0.1, share * x)), None)
+
+
+def facts(t, conn):
+    """Everything the knowledge base may test or print about one request and its connection."""
+    answered = t.get("answered")
+    if answered:
+        elapsed = t.get("total") if t.get("truncated") else t.get("wait")
+    else:
+        elapsed = max(conn.get("end_time", 0) - t.get("req_end", 0), 0)
+    timeout = _near(elapsed, ROUND_TIMEOUTS, 0.01)
+    retrans_count, transfer, rtt, tls_time = t.get("retrans_count"), t.get("transfer_clean"), conn.get("rtt_server"), t.get("tls_time")
+    reported, service, ctype = t.get("server_reported"), t.get("service"), t.get("content_type") or ""
+    return dict(
+        t, pct=f"{(t.get('cause_share') or 0) * 100:.0f}", elapsed=elapsed, near_timeout=timeout is not None, timeout=timeout,
+        retrans_gap=t.get("retrans_time", 0) / retrans_count if retrans_count else None,
+        reported_gap=service - reported if None not in (service, reported) else None,
+        throughput_mbps=t.get("resp_bytes", 0) * 8 / transfer / 1e6 if transfer else None,
+        tls_rtts=tls_time / rtt if tls_time and rtt else None,
+        syn_retry=_near(t.get("connect_time"), SYN_RETRIES, 0.1) is not None, still_open=not conn.get("close_type"),
+        uncompressed_text=(t.get("resp_bytes") or 0) >= LARGE_TEXT and not t.get("content_encoding") and any(x in ctype for x in TEXT_TYPES),
+        expect_continue="100-continue" in (t.get("req_headers") or "").lower(), conn_retransmissions=conn.get("retransmissions"),
+        **{k: conn.get(k) for k in ("capture_point", "closed_by", "close_type", "mss", "offload", "rtt_client", "rst_code", "tls_version")})
 
 
 def explain(t, conn):
     """One or two plain sentences for a transaction row."""
-    c = t["cause"]
-    wait = conn.get("end_time", 0) - t["req_end"] if not t.get("answered") else 0
-    pct = f"{(t.get('cause_share') or 0) * 100:.0f}%"
-    if c == "no_response":
-        return f"The server never answered. The capture shows no response for {_ms(max(wait, 0))} after the request."
-    if c == "connection_reset":
-        return f"No response: the {conn.get('closed_by') or 'other side'} reset the connection {_ms(max(wait, 0))} after the request."
-    if c == "truncated":
-        return (f"The response stopped early: {t.get('body_bytes')} of {t.get('resp_content_length')} body bytes arrived "
-                f"before the connection closed ({conn.get('close_type') or 'unknown'} by {conn.get('closed_by') or 'unknown'}).")
-    if c == "gateway":
-        return f"HTTP {t['status']} came from a proxy or gateway after {_ms(_f(t.get('wait')))}, so look at the service behind it."
-    text = {
-        "normal": "No delay stands out.",
-        "service": f"The server spent {_ms(_f(t.get('service')))} ({pct}) before its first byte. The network is not the reason.",
-        "network": f"Round-trip time of {_ms(_f(t.get('network')))} ({pct}) is the largest part. The server itself answered quickly.",
-        "loss": f"{t.get('retrans_count')} retransmission(s) cost {_ms(_f(t.get('retrans_time')))} ({pct}). Packets were lost or badly delayed.",
-        "slow_client": f"The receiver closed its TCP window for {_ms(_f(t.get('zero_window_time')))} ({pct}), so it was reading too slowly.",
-        "transfer": f"Sending {t.get('resp_bytes')} bytes took {_ms(_f(t.get('transfer_clean')))} ({pct}). The body size or bandwidth limits it.",
-        "upload": f"Sending the request took {_ms(_f(t.get('request_clean')))} ({pct}).",
-        "queueing": f"The request waited {_ms(_f(t.get('queue_time')))} ({pct}) for an earlier response on the same connection.",
-        "delayed_ack": f"A sender waited {_ms(_f(t.get('delayed_ack_time')))} ({pct}) for a delayed ACK. This pattern often means Nagle and delayed ACK together.",
-        "connect": f"Opening the TCP connection took {_ms(_f(t.get('connect_time')))} ({pct}).",
-        "tls": f"The TLS handshake took {_ms(_f(t.get('tls_time')))} ({pct}).",
-    }[c]
-    reported = t.get("server_reported")
-    if reported is not None and t.get("service") is not None:
-        text += f" The server reports {_ms(reported)} itself, against {_ms(t['service'])} measured here."
-    return text
+    return knowledge.summary(t["cause"], facts(t, conn))

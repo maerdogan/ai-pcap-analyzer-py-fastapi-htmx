@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block title %}{{ _("Capture guide") }}{% endblock %}
+{% block main %}
+<header class="page-head"><div><h1>{{ _("Capture guide") }}</h1><p class="muted">{{ _("Get a command to take the right capture. Files stay under the {n} MB limit.", n=max_mb) }}</p></div></header>
+<section class="panel">
+<form method="get" action="/capture-guide">
+  <div class="fields">
+    <label>{{ _("Server IP") }} <input name="server" value="{{ q.server or '' }}" placeholder="10.0.0.5"></label>
+    <label>{{ _("TCP port") }} <input name="port" inputmode="numeric" value="{{ q.port or '' }}" placeholder="8080"></label>
+    <label>{{ _("Client IP") }} <input name="client" value="{{ q.client or '' }}"></label>
+    <label>{{ _("Seconds") }} <input name="seconds" inputmode="numeric" value="{{ seconds }}"></label>
+    <label>{{ _("Interface") }} <input name="interface" value="{{ q.interface or 'any' }}"></label>
+    <label>{{ _("Namespace") }} <input name="namespace" value="{{ q.namespace or 'default' }}"></label>
+    <label>{{ _("Pod") }} <input name="pod" value="{{ q.pod or '' }}" placeholder="POD"></label>
+    <label>{{ _("Container") }} <input name="container" value="{{ q.container or '' }}" placeholder="CONTAINER"></label>
+    <label>{{ _("Debug image") }} <input name="image" value="{{ q.image or '' }}" placeholder="nicolaka/netshoot"></label>
+  </div>
+  <button class="primary">{{ _("Show commands") }}</button>
+</form>
+</section>
+{% for p in points %}
+<section class="panel guide">
+  <h2>{{ p.title }}</h2>
+  <p>{{ ui.rich(p.text) }}</p>
+  {% for line in p.lines %}<pre class="command">{{ line }}</pre>{% endfor %}
+  <dl class="facts two-col"><div><dt>{{ _("What it shows") }}</dt><dd>{{ p.shows }}</dd></div><div><dt>{{ _("What it cannot show") }}</dt><dd>{{ p.hides }}</dd></div></dl>
+</section>
+{% endfor %}
+<p class="hint">{{ _("To measure NetScaler, capture on both sides at the same time and open the two captures in Compare.") }} <a href="/compare">{{ _("Compare") }}</a></p>
+{% endblock %}

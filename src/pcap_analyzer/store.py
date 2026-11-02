@@ -12,7 +12,7 @@ SCHEMA = {
         payload_client BIGINT, payload_server BIGINT, handshake_seen BOOLEAN, connect_time DOUBLE, rtt_server DOUBLE,
         rtt_client DOUBLE, capture_point VARCHAR, mss INT, tls_version VARCHAR, sni VARCHAR, tls_time DOUBLE,
         close_type VARCHAR, closed_by VARCHAR, transactions INT, sack BOOLEAN, wscale INT, min_window BIGINT,
-        retransmissions INT, zero_windows INT, byte_ratio_db DOUBLE, offload BOOLEAN""",
+        retransmissions INT, zero_windows INT, byte_ratio_db DOUBLE, offload BOOLEAN, rst_code INT, one_way BOOLEAN""",
     "http_transactions": """
         id BIGINT PRIMARY KEY, stream INT, h2_stream INT, seq_on_conn INT, new_conn BOOLEAN, method VARCHAR, uri VARCHAR,
         url_template VARCHAR, host VARCHAR, http_version VARCHAR, status INT, phrase VARCHAR, answered BOOLEAN, req_frame BIGINT, resp_frame BIGINT,
@@ -29,15 +29,15 @@ SCHEMA = {
 }
 
 
-def _columns(ddl):
-    return [c.split()[0] for c in ddl.split(",") if c.split() and c.split()[0].isidentifier()]
+def columns(table):
+    return [c.split()[0] for c in SCHEMA[table].split(",") if c.split() and c.split()[0].isidentifier()]
 
 
 def _load(db, table, rows):
     """Bulk load through JSON lines: fast, and safe for multi-line text."""
     if not rows:
         return
-    cols = _columns(SCHEMA[table])
+    cols = columns(table)
     with tempfile.NamedTemporaryFile("w", suffix=".json", encoding="utf-8") as f:
         for r in rows:
             f.write(json.dumps(dict(zip(cols, r))) + "\n")
@@ -46,7 +46,7 @@ def _load(db, table, rows):
 
 
 def _as_rows(dicts, table):
-    cols = _columns(SCHEMA[table])
+    cols = columns(table)
     return [[d.get(c) for c in cols] for d in dicts]
 
 

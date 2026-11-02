@@ -1,18 +1,19 @@
-{% import "_macros.html" as ui %}
+{% import "_macros.html" as ui with context %}
 <!doctype html>
-<html lang="en">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>{{ m.filename }} report</title><style>{{ css | safe }}</style></head>
+<html lang="{{ lang() }}">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>{{ _("{name} report", name=m.filename) }}</title><style>{{ css | safe }}</style></head>
 <body class="report"><main class="page">
 <h1>{{ m.filename }}</h1>
-<p class="muted">{{ m.packets }} packets, {{ m.connections }} connections and {{ m.transactions }} HTTP requests. Captured {{ m.capture_start | when }}. Secrets are masked.</p>
-{% for w in m.warnings %}<p class="warn">{{ warning_text[w] }}</p>{% endfor %}
-{% if budget %}<section class="panel"><h2>Where the time went</h2><div class="budget">{{ ui.strip(budget) }}</div>{{ ui.breakdown(budget) }}</section>{% endif %}
+<p class="muted">{{ _("{packets} packets, {connections} connections and {requests} HTTP requests. Captured {when}. Secrets are masked.", packets=m.packets, connections=m.connections, requests=m.transactions, when=m.capture_start | when) }}</p>
+{{ ui.quality(quality) }}
+{% for w in m.warnings %}<p class="warn">{{ warning_text()[w] }}</p>{% endfor %}
+{% if budget %}<section class="panel"><h2>{{ _("Where the time went") }}</h2><div class="budget">{{ ui.strip(budget) }}</div>{{ ui.breakdown(budget) }}</section>{% endif %}
 {% if o.http.requests %}{{ ui.stats(o.http) }}{% endif %}
-{% if issues %}<section class="panel flush"><h2>Issues</h2><ul class="issues">{% for i in issues %}<li class="sev-{{ i.severity }}"><span class="n">{{ i.count }}</span><div><b>{{ i.title }}</b><p>{{ i.why }}</p></div></li>{% endfor %}</ul></section>{% endif %}
-{% if urls %}<section><h2>URLs</h2><div class="table-wrap"><table>
-<thead><tr><th>Method</th><th>URL</th><th class="num">Requests</th><th class="num">Failed</th><th class="num">Average</th><th class="num">95th percentile</th><th class="num">Slowest</th></tr></thead>
+{% if issues %}<section class="panel flush"><h2>{{ _("Issues") }}</h2><ul class="issues">{% for i in issues %}<li class="sev-{{ i.severity }}"><span class="n">{{ i.count }}</span><div><b>{{ i.title }}</b><p>{{ i.why }}</p></div></li>{% endfor %}</ul></section>{% endif %}
+{% if urls %}<section><h2>{{ _("URLs") }}</h2><div class="table-wrap"><table>
+<thead><tr><th>{{ _("Method") }}</th><th>URL</th><th class="num">{{ _("Requests") }}</th><th class="num">{{ _("Failed") }}</th><th class="num">{{ _("Average") }}</th><th class="num">{{ _("95th percentile") }}</th><th class="num">{{ _("Slowest") }}</th></tr></thead>
 <tbody>{% for u in urls %}<tr><td>{{ u.method }}</td><td>{{ u.url }}</td><td class="num">{{ u.requests }}</td><td class="num">{{ u.failed }}</td><td class="num">{{ u.avg_total | seconds }}</td><td class="num">{{ u.p95_total | seconds }}</td><td class="num">{{ u.max_total | seconds }}</td></tr>{% endfor %}</tbody>
 </table></div></section>{% endif %}
-{% if slow %}<section class="panel flush"><h2>Slowest requests</h2>{{ ui.waterfall(slow, a, False) }}</section>{% endif %}
+{% if slow %}<section class="panel flush"><h2>{{ _("Slowest requests") }}</h2>{{ ui.waterfall(slow, a, False) }}</section>{% endif %}
 <p class="hint">pcap-analyzer {{ version }}</p>
 </main></body></html>

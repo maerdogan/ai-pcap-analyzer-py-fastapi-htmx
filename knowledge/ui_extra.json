@@ -1,0 +1,3 @@
+["Near client", "Near server", "Middle", "Unknown", "Client", "Server", "–", "First host", "Second host", "Port", "Size", "Seconds", "Capture", "Key log", "RSA key",
+ "High", "Medium", "Low", "Exact", "Likely", "Requests", "Failed", "Average", "Median", "95th percentile", "Slowest", "Average server wait", "Average service",
+ "Average transfer", "TCP connections", "Average connect", "Average round trip", "Overview", "Issues", "URLs", "Connections", "Hosts", "Servers"]

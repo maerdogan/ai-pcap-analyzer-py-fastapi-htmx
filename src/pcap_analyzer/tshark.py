@@ -6,18 +6,21 @@ Ubuntu's AppArmor profile stops tshark from reading most other paths.
 import ipaddress
 import os
 import re
+import select
 import shutil
 import subprocess
 import tempfile
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 
 MIN_VERSION = (4, 0)
+POLL_S = 0.2
 AGG = "\x1f"
 
 SINGLE = [
     "frame.number", "frame.time_epoch", "frame.len", "frame.cap_len", "ip.src", "ip.dst", "ipv6.src", "ipv6.dst",
-    "tcp.stream", "tcp.srcport", "tcp.dstport", "tcp.seq", "tcp.len", "tcp.flags", "tcp.window_size",
+    "tcp.stream", "tcp.srcport", "tcp.dstport", "tcp.seq", "tcp.ack", "tcp.len", "ip.id", "tcp.flags", "tcp.window_size", "tcp.window_size_value",
     "tcp.options.mss_val", "tcp.options.wscale.shift", "tcp.options.sack_perm", "tcp.analysis.initial_rtt",
     "tcp.analysis.ack_rtt", "dns.qry.name", "dns.time", "ip.flags.mf", "icmp.type", "icmp.code",
 ]
@@ -32,7 +35,7 @@ MULTI = [
 ]
 # Flags that tshark's TCP analysis sets on a packet. Stored as events.
 EVENTS = [
-    "retransmission", "fast_retransmission", "spurious_retransmission", "out_of_order", "lost_segment",
+    "retransmission", "fast_retransmission", "spurious_retransmission", "out_of_order", "lost_segment", "ack_lost_segment",
     "duplicate_ack", "zero_window", "zero_window_probe", "window_full", "window_update", "keep_alive",
 ]
 FIELDS = SINGLE + MULTI + [f"tcp.analysis.{e}" for e in EVENTS]
@@ -40,6 +43,57 @@ FIELDS = SINGLE + MULTI + [f"tcp.analysis.{e}" for e in EVENTS]
 
 class TsharkError(Exception):
     """tshark is missing, too old, or rejected the capture or filter."""
+
+
+class Stopped(Exception):
+    """The analysis ran past its time limit or someone cancelled it."""
+
+    def __init__(self, reason):
+        super().__init__(reason)
+        self.reason = reason  # "timeout" or "cancelled"
+
+
+class Limit:
+    """Stop one analysis on time or on request. A hung tshark writes nothing, so it has to be killed from outside."""
+
+    def __init__(self, seconds=0):
+        self.reason = None
+        self.proc = None
+        self.timer = None
+        self.lock = threading.Lock()
+        self.start(seconds)
+
+    def start(self, seconds):
+        if seconds:
+            self.timer = threading.Timer(seconds, self.stop, ["timeout"])
+            self.timer.daemon = True
+            self.timer.start()
+
+    def stop(self, reason="cancelled"):
+        with self.lock:
+            self.reason = self.reason or reason
+            self._kill()
+
+    def attach(self, proc):
+        with self.lock:
+            self.proc = proc
+            if self.reason:
+                self._kill()
+
+    def _kill(self):
+        try:
+            if self.proc:
+                self.proc.kill()
+        except PermissionError:  # Ubuntu's AppArmor profile refuses signals to tshark. It then ends on its next write.
+            pass
+
+    def check(self):
+        if self.reason:
+            raise Stopped(self.reason)
+
+    def close(self):
+        if self.timer:
+            self.timer.cancel()
 
 
 @dataclass(frozen=True)
@@ -84,7 +138,8 @@ def version(binary="tshark"):
 
 
 def _command(binary, capture, keylog, rsa_key, expr):
-    cmd = [binary, "-n", "-r", str(capture), "-o", "http.desegment_body:FALSE",
+    # Header reassembly stays off: it takes a body segment with no line end for a partial header and loses later responses.
+    cmd = [binary, "-n", "-r", str(capture), "-o", "http.desegment_body:FALSE", "-o", "http.desegment_headers:FALSE",
            "-o", "tcp.desegment_tcp_streams:TRUE", "-o", "tls.desegment_ssl_records:TRUE",
            "-T", "fields", "-E", "separator=/t", "-E", "quote=n", "-E", "occurrence=a", "-E", f"aggregator={AGG}"]
     if keylog:
@@ -116,8 +171,26 @@ def extract_stream(capture, stream, out, binary="tshark"):
         shutil.copyfile(dst, out)
 
 
-def packets(path, keylog=None, rsa_key=None, flt=None, binary="tshark", warnings=None):
+def _lines(proc, limit):
+    """Read tshark's output, looking up regularly so that a stop works even when tshark hangs and cannot be killed."""
+    fd, tail = proc.stdout.fileno(), b""
+    while True:
+        limit.check()
+        if not select.select([fd], [], [], POLL_S)[0]:
+            continue
+        chunk = os.read(fd, 1 << 20)
+        if not chunk:
+            break
+        *lines, tail = (tail + chunk).split(b"\n")
+        for line in lines:
+            yield line.decode("utf-8", "replace")
+    if tail:
+        yield tail.decode("utf-8", "replace")
+
+
+def packets(path, keylog=None, rsa_key=None, flt=None, binary="tshark", warnings=None, limit=None):
     """Yield packets as dicts. Non-fatal problems are appended to warnings."""
+    limit = limit or Limit()
     expr = flt.expression() if flt else None
     with tempfile.TemporaryDirectory(prefix="pcap-analyzer-", dir="/tmp") as tmp:
         os.chmod(tmp, 0o700)
@@ -127,17 +200,18 @@ def packets(path, keylog=None, rsa_key=None, flt=None, binary="tshark", warnings
         env = dict(os.environ, LC_ALL="C")
         with tempfile.TemporaryFile(mode="w+", dir=tmp) as errfile:
             try:
-                proc = subprocess.Popen(_command(binary, capture, kl, rk, expr), stdout=subprocess.PIPE,
-                                        stderr=errfile, text=True, encoding="utf-8", errors="replace", env=env)
+                proc = subprocess.Popen(_command(binary, capture, kl, rk, expr), stdout=subprocess.PIPE, stderr=errfile, env=env)
             except OSError as e:
                 raise TsharkError(f"tshark could not be started: {e}") from e
+            limit.attach(proc)
             count = 0
             with proc.stdout:
-                for line in proc.stdout:
-                    vals = line.rstrip("\n").split("\t")
+                for line in _lines(proc, limit):
+                    vals = line.split("\t")
                     count += 1
                     yield dict(zip(FIELDS, vals))
             code = proc.wait()
+            limit.check()
             errfile.seek(0)
             err = errfile.read().strip()
         if code == 0:

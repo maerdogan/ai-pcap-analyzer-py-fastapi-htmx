@@ -1,19 +1,20 @@
 {% extends "base.html" %}
-{% import "_macros.html" as ui %}
+{% import "_macros.html" as ui with context %}
 {% block title %}{{ d.title }}{% endblock %}
 {% block capture_nav %}{{ ui.capnav(a, "issues", issue_count) }}{% endblock %}
 {% block main %}
-<p class="back"><a href="/a/{{ a.id }}?tab=issues">Issues</a></p>
-<header class="page-head"><div><h1>{{ d.title }}</h1><p class="muted">{{ d.why }}</p></div></header>
+{{ ui.crumbs([(_("Captures"), "/"), (m.filename, "/a/" ~ a.id), (_("Issues"), "/a/" ~ a.id ~ "?tab=issues"), (d.title, None)]) }}
+<header class="hero"><div class="hero-head"><div><h1>{{ d.title }}</h1><p class="muted">{{ d.why }}</p></div></div></header>
+{% if d.guide %}{{ ui.guide(d.guide) }}{% endif %}
 {% if d.connections %}
-<section>
-<h2>Connections</h2>
+<section class="panel flush">
+<h2>{{ _("Connections") }}</h2>
 <div class="table-wrap"><table>
-  <thead><tr><th>Client</th><th>Server</th><th>Type</th><th class="num">Duration</th><th>Closed by</th></tr></thead>
+  <thead><tr><th>{{ _("Client") }}</th><th>{{ _("Server") }}</th><th>{{ _("Type") }}</th><th class="num">{{ _("Duration") }}</th><th>{{ _("Closed by") }}</th></tr></thead>
   <tbody>{% for c in d.connections %}
-    <tr><td><a href="/a/{{ a.id }}/conn/{{ c.stream }}">{{ c.client_ip }}:{{ c.client_port }}</a></td><td>{{ c.server_ip }}:{{ c.server_port }}</td><td>{{ c.kind }}</td><td class="num">{{ c.duration | seconds }}</td><td>{{ (c.closed_by or "–") | capitalize }}{% if c.close_type %} ({{ c.close_type }}){% endif %}</td></tr>
+    <tr><td><a href="/a/{{ a.id }}/conn/{{ c.stream }}">{{ c.client_ip }}:{{ c.client_port }}</a></td><td>{{ c.server_ip }}:{{ c.server_port }}</td><td>{{ c.kind }}</td><td class="num">{{ c.duration | seconds }}</td><td>{{ _((c.closed_by or "–") | capitalize) }}{% if c.close_type %} ({{ c.close_type }}){% endif %}{% if c.rst_note %}<div class="hint">{{ c.rst_code }}: {{ c.rst_note }}</div>{% endif %}</td></tr>
   {% endfor %}</tbody>
 </table></div></section>
 {% endif %}
-{% if d.transactions %}<section class="panel flush"><h2>Requests</h2>{{ ui.waterfall(d.transactions, a) }}</section>{% endif %}
+{% if d.transactions %}<section class="panel flush"><h2>{{ _("Requests") }}</h2>{{ ui.waterfall(d.transactions, a) }}</section>{% endif %}
 {% endblock %}

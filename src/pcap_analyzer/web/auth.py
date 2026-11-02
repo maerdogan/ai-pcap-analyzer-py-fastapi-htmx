@@ -50,6 +50,7 @@ class Auth:
         self.user = user
         self.hash = password_hash or hash_password(password)
         self.sessions = {}
+        self.form_key = secrets.token_bytes(32)  # sessions live in memory, so this can too
         self.fails = deque()  # (time, client). Blocking stops new entries, so this stays small.
         self.lock = threading.Lock()
 
@@ -80,6 +81,13 @@ class Auth:
             del self.sessions[token]
             return False
         return True
+
+    def form_token(self, token):
+        """Forms prove with this that they came from a page of this session."""
+        return hmac.new(self.form_key, (token or "").encode(), hashlib.sha256).hexdigest()
+
+    def form_token_ok(self, token, sent):
+        return hmac.compare_digest(self.form_token(token).encode(), str(sent or "").encode())
 
     def logout(self, token):
         self.sessions.pop(token or "", None)

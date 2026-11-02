@@ -5,10 +5,11 @@ import re
 import shutil
 import tempfile
 import time
+from collections import Counter
 from dataclasses import astuple, dataclass
 from pathlib import Path
 
-from . import __version__, store, tshark
+from . import __version__, knowledge, store, tshark
 from .config import Settings
 from .parser import Builder, finish_stream
 
@@ -51,8 +52,7 @@ def _refuse_compressed(path):
     with open(path, "rb") as f:
         head = f.read(4)
     if head.startswith(COMPRESSED_MAGIC):
-        raise CompressedCapture("Compressed captures are not accepted, because their real size cannot be checked. "
-                                "Decompress the file and upload it again.")
+        raise CompressedCapture(knowledge.t("Compressed captures are not accepted, because their real size cannot be checked. Decompress the file and upload it again."))
 
 
 def _digest(paths, flt):
@@ -71,6 +71,10 @@ def _digest(paths, flt):
 def _warnings(b, conns, keyed, warnings):
     if b.truncated:
         warnings.append("frames_truncated")
+    if b.copies:
+        warnings.append("copies_removed")
+    if b.tunnelled:
+        warnings.append("tunnel_seen")
     if any(c["offload"] for c in conns):
         warnings.append("offload_suspected")
     tls_undecrypted = [c for c in conns if c["kind"] == "TLS"]
@@ -101,13 +105,31 @@ def _attach_packet_size(b, txns):
         x["max_packet"] = max((p.size for p in s.packets if x["req_frame"] <= p.frame <= hi), default=0)
 
 
-def analyze(path, keylog=None, rsa_key=None, flt=None, settings=None, use_cached=True, display_name=None):
+def _quality(b, conns):
+    """Counts that show how far this capture can be trusted. Levels and wording come later, from the reports."""
+    events = Counter(e[4] for e in b.events)
+    return dict(tcp_packets=b.tcp, connections=len(conns), unseen=events["ack_lost_segment"], gaps=events["lost_segment"], snapped=b.truncated, copies=b.copies,
+                started_before=sum(not c["handshake_seen"] for c in conns), open_at_end=sum(not c["close_type"] for c in conns),
+                one_way=sum(not (c["payload_client"] or c["payload_server"]) or c["one_way"] for c in conns),
+                encrypted=sum(c["kind"] == "TLS" for c in conns))
+
+
+def analyze(path, keylog=None, rsa_key=None, flt=None, settings=None, use_cached=True, display_name=None, limit=None):
     settings = settings or Settings()
+    own_limit = limit is None
+    limit = limit or tshark.Limit(settings.analysis_timeout_s)
+    try:
+        return _analyze(path, keylog, rsa_key, flt, settings, use_cached, display_name, limit)
+    finally:
+        if own_limit:
+            limit.close()
+
+
+def _analyze(path, keylog, rsa_key, flt, settings, use_cached, display_name, limit):
     flt = flt or tshark.Filter()
     path = Path(path)
-    limit = settings.max_size_mb * 1024 * 1024
-    if path.stat().st_size > limit:
-        raise CaptureTooLarge(f"{path.name} is larger than the {settings.max_size_mb} MB limit")
+    if path.stat().st_size > settings.max_size_mb * 1024 * 1024:
+        raise CaptureTooLarge(knowledge.t("{name} is larger than the {n} MB limit", name=path.name, n=settings.max_size_mb))
     _refuse_compressed(path)
     ts_version = tshark.version(settings.tshark)
     aid = _digest([path, keylog, rsa_key], flt)
@@ -118,10 +140,11 @@ def analyze(path, keylog=None, rsa_key=None, flt=None, settings=None, use_cached
     started = time.monotonic()
     warnings = []
     b = Builder()
-    for p in tshark.packets(path, keylog, rsa_key, flt, settings.tshark, warnings):
+    for p in tshark.packets(path, keylog, rsa_key, flt, settings.tshark, warnings, limit):
         b.add(p)
     conns, txns = [], []
     for s in b.streams.values():
+        limit.check()
         c, t = finish_stream(s)
         conns.append(c)
         txns += t
@@ -131,13 +154,21 @@ def analyze(path, keylog=None, rsa_key=None, flt=None, settings=None, use_cached
 
     settings.workdir.mkdir(parents=True, exist_ok=True)
     tmp = Path(tempfile.mkdtemp(prefix=".tmp-", dir=settings.workdir))
+    try:
+        return _save(tmp, out, aid, path, keylog, rsa_key, flt, settings, display_name, ts_version, started, warnings, b, conns, txns, limit)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def _save(tmp, out, aid, path, keylog, rsa_key, flt, settings, display_name, ts_version, started, warnings, b, conns, txns, limit):
     store.write(tmp / "analysis.duckdb", conns, txns, b.events, b.dns_rows)
+    limit.check()
     meta = dict(
         id=aid, filename=display_name or path.name, size=path.stat().st_size, created=time.time(), tshark=ts_version, version=__version__,
         decryption="keylog" if keylog else "rsa_key" if rsa_key else None, filter=flt.expression(),
         packets=b.total, tcp_packets=b.tcp, bytes=b.bytes, connections=len(conns), transactions=len(txns),
-        ip_fragments=b.fragments, frag_needed=b.frag_needed, capture_start=b.t_first, capture_end=b.t_last, duration_s=round(time.monotonic() - started, 3),
-        warnings=_warnings(b, conns, bool(keylog or rsa_key), warnings))
+        ip_fragments=b.fragments, frag_needed=b.frag_needed, copies=b.copies, tunnelled=b.tunnelled, capture_start=b.t_first, capture_end=b.t_last, duration_s=round(time.monotonic() - started, 3),
+        quality=_quality(b, conns), warnings=_warnings(b, conns, bool(keylog or rsa_key), warnings))
     if settings.keep_capture:
         shutil.copyfile(path, tmp / "capture")
         (tmp / "capture").chmod(0o600)
@@ -147,7 +178,7 @@ def analyze(path, keylog=None, rsa_key=None, flt=None, settings=None, use_cached
     try:
         tmp.rename(out)
     except OSError:  # an identical analysis finished first
-        shutil.rmtree(tmp, ignore_errors=True)
+        pass
     return Analysis(aid, out, meta, False)
 
 

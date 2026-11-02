@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
 # Run pcap-analyzer as a normal user, without sudo, Docker or systemd.
-# Python, the Python packages and tshark all come from bundle/.
+# Python, the Python packages and tshark come from bundle/. The application itself runs from ../src,
+# so a code change needs no new bundle.
 set -euo pipefail
 umask 077
 
 HERE=$(cd "$(dirname "$(readlink -f "$0")")" && pwd)
+SRC=$(dirname "$HERE")/src
 RUNTIME=$HERE/runtime
 PIDFILE=$HERE/pcap-analyzer.pid
 LOG=$HERE/pcap-analyzer.log
@@ -43,6 +45,7 @@ load_env() {
   export PATH=$RUNTIME/tshark/bin:$RUNTIME/python/bin:$PATH
   export WIRESHARK_DATA_DIR=$RUNTIME/tshark/share/wireshark
   export PYTHONNOUSERSITE=1
+  export PYTHONPATH=$SRC
   export PCAP_ANALYZER_WORKDIR=${PCAP_ANALYZER_WORKDIR:-$HERE/data}
   HOST=${PCAP_ANALYZER_HOST:-127.0.0.1}
   PORT=${PCAP_ANALYZER_PORT:-8000}
@@ -140,6 +143,7 @@ case $cmd in
 esac
 
 check_host
+[[ -f $SRC/pcap_analyzer/cli.py ]] || die "$SRC is missing. Keep this folder inside the repository, next to src/"
 unpack
 load_env
 

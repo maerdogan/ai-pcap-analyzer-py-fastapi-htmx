@@ -24,7 +24,12 @@ def anon(settings):
 def client(anon):
     r = anon.post("/login", data={"username": "admin", "password": PW})
     assert r.status_code == 303
+    anon.headers["X-CSRF-Token"] = form_token(anon)
     return anon
+
+
+def form_token(client):
+    return re.search(r'"X-CSRF-Token": "(\w+)"', client.get("/").text)[1]
 
 
 def upload(client, path, extra_files=None, **form):
@@ -123,7 +128,7 @@ def test_cookie_flags_and_logout(anon):
     r = anon.post("/login", data={"username": "admin", "password": PW})
     c = r.headers["set-cookie"].lower()
     assert "httponly" in c and "samesite=strict" in c
-    assert anon.post("/logout").status_code == 303
+    assert anon.post("/logout", data={"csrf_token": form_token(anon)}).status_code == 303
     assert anon.get("/").status_code == 303
 
 
@@ -140,6 +145,62 @@ def test_security_headers(client):
 
 def test_cross_site_post_refused(client):
     assert client.post("/logout", headers={"Sec-Fetch-Site": "cross-site"}).status_code == 403
+
+
+@pytest.mark.parametrize("path", ["/logout", "/upload", "/filters", "/filters/x/delete", "/a/x/delete", "/jobs/x/cancel"])
+def test_post_needs_the_form_token(client, path):
+    token = client.headers.pop("X-CSRF-Token")
+    assert client.post(path).status_code == 403
+    assert client.post(path, data={"csrf_token": "wrong"}).status_code == 403
+    assert client.post(path, headers={"X-CSRF-Token": "wrong"}).status_code == 403
+    assert client.post(path, data={"csrf_token": token}).status_code != 403
+    assert path == "/logout" or client.get("/").status_code == 200
+
+
+def test_form_token_belongs_to_one_session(settings):
+    settings.admin_password = PW
+    with TestClient(create_app(settings), follow_redirects=False, base_url="https://testserver") as c:
+        def login():
+            c.cookies.clear()
+            assert c.post("/login", data={"username": "admin", "password": PW}).status_code == 303
+            return form_token(c)
+        first, second = login(), login()
+        assert first != second
+        assert c.post("/logout", headers={"X-CSRF-Token": first}).status_code == 403
+        assert c.post("/logout", headers={"X-CSRF-Token": second}).status_code == 303
+
+
+def test_refused_form_explains_itself(client):
+    del client.headers["X-CSRF-Token"]
+    r = client.post("/logout")
+    assert "out of date" in r.text
+    assert 'class="error"' in client.post("/upload", headers={"HX-Request": "true"}, files={"capture": ("a.pcap", b"x")}).text
+
+
+def test_every_post_form_carries_the_token(client, samples):
+    home = upload(client, samples / "http_scenarios.pcap")
+    client.post("/filters", data=dict(name="Orders", url="/orders", back=f"{home}/inspect"))
+    pages = [client.get(p).text for p in ("/", f"{home}/inspect", f"{home}?tab=issues", "/compare", "/capture-guide")]
+    forms = [f for page in pages for f in re.findall(r"<form\b.*?</form>", page, re.S) if re.search(r'method="post"|hx-post', f)]
+    assert {re.search(r'action="([^"]+)"', f)[1] for f in forms if "action=" in f} >= {"/logout", "/filters", "/language"}
+    for f in forms:
+        assert 'name="csrf_token"' in f or 'action="/language"' in f or "hx-post" in f, f
+    assert all('"X-CSRF-Token"' in page.split("<main", 1)[0] for page in pages)
+
+
+def test_https_turns_on_hsts_for_every_answer(settings):
+    settings.admin_password = PW
+    with TestClient(create_app(settings, https=True), follow_redirects=False, base_url="https://testserver") as c:
+        for r in (c.get("/login"), c.get("/"), c.get("/static/app.css"), c.post("/upload")):
+            assert r.headers["strict-transport-security"] == "max-age=31536000"
+            assert r.headers["content-security-policy"]
+    settings.hsts_s = 0
+    with TestClient(create_app(settings, https=True), base_url="https://testserver") as c:
+        assert c.get("/login").headers["strict-transport-security"] == "max-age=0"
+
+
+def test_plain_http_sends_no_hsts(anon):
+    assert "strict-transport-security" not in anon.get("/login").headers
 
 
 def test_upload_and_all_views(client, samples):
@@ -162,6 +223,8 @@ def test_upload_and_all_views(client, samples):
     assert "HTTP 504" in client.get(f"{home}/issue/gateway").text
     assert "Connection" in client.get(f"{home}/issue/resets").text
     assert client.get(f"{home}/issue/nope").status_code == 404
+    guide = client.get(f"{home}/issue/resets").text
+    assert "What to check next" in guide and "9300: Idle or zombie timeout" in guide and "rfc-editor.org/rfc/rfc9293" in guide
     conn = client.get(f"{home}/conn/0").text
     assert "Slowest requests" in conn and "Window scale" in conn
     assert client.get(f"{home}/conn/999").status_code == 404
@@ -169,6 +232,9 @@ def test_upload_and_all_views(client, samples):
     detail = client.get(f"{home}/txn/{tid}").text
     assert "Host: app.example.test" in detail and "are masked" in detail
     assert client.get(f"{home}/txn/99999").status_code == 404
+    slow = re.search(r"/txn/(\d+)", client.get(f"{home}/issue/gateway").text)[1]
+    page = client.get(f"{home}/txn/{slow}").text
+    assert "About this result" in page and "<code>kubectl get endpointslices</code>" in page
     assert client.post(f"{home}/delete").status_code == 303
     assert client.get(home).status_code == 404
 
@@ -243,7 +309,7 @@ def test_compare_needs_two(client):
 def test_downloads(client, samples, tmp_path):
     home = upload(client, samples / "http_scenarios.pcap")
     aid = home.rsplit("/", 1)[1]
-    for name, fmt, sniff in (("urls", "csv", b"method"), ("requests", "json", b"["), ("hosts", "xlsx", b"PK")):
+    for name, fmt, sniff in (("urls", "csv", b"Method"), ("requests", "json", b"["), ("hosts", "xlsx", b"PK")):
         r = client.get(f"/export/{aid}/{name}.{fmt}")
         assert r.status_code == 200 and sniff in r.content[:20] and "attachment" in r.headers["content-disposition"]
     assert client.get(f"/export/{aid}/nope.csv").status_code == 404
@@ -261,3 +327,45 @@ def test_downloads(client, samples, tmp_path):
 
 def test_download_needs_login(anon):
     assert anon.get("/export/" + "0" * 20 + "/urls.csv").status_code == 303
+
+
+def test_new_pages(client, samples):
+    home = upload(client, samples / "backends.pcap")
+    assert "10.50.0.3:8080" in client.get(f"{home}?tab=backends").text
+    assert "data-chart=\"timeline\"" in client.get(home).text
+    aid = home.rsplit("/", 1)[1]
+    line = client.get(f"/api/a/{aid}/timeline").json()
+    assert sum(r["requests"] for r in line["rows"]) == 30
+    start, end = line["rows"][0]["start"], line["rows"][5]["start"]
+    assert "Show the whole capture" in client.get(f"{home}/inspect?start={start}&end={end}").text
+    guide = client.get("/capture-guide?server=10.0.0.5&port=8080&seconds=30").text
+    assert "timeout 30 tcpdump" in guide and "kubectl debug" in guide
+    assert "valid" in client.get("/capture-guide?server=nonsense").text
+    assert client.get("/capture-guide?seconds=99999").status_code == 400
+
+
+def test_cancel_page(client):
+    assert client.post("/jobs/unknown/cancel").status_code in (200, 404)
+
+
+def test_recent_captures_are_listed_for_the_signed_in_only(client, samples):
+    upload(client, samples / "http_scenarios.pcap")
+    assert 'class="ticker"' in client.get("/capture-guide").text
+    client.cookies.clear()
+    page = client.post("/language", data={"language": "xx"})
+    assert page.status_code == 400
+    assert "http_scenarios.pcap" not in page.text and 'class="ticker"' not in page.text
+
+
+def test_capture_pages_open_with_the_score_and_a_url_search(client, samples):
+    target = upload(client, samples / "http_scenarios.pcap")
+    page = client.get(target).text
+    assert re.search(r'class="score".*?class="good">13<.*?class="bad">5<', page, re.S)
+    assert f'action="{target}/inspect"' in page and 'name="url"' in page
+    assert client.get(f"{target}/inspect", params={"url": "/api/pay"}).status_code == 200
+
+
+def test_captures_are_listed_by_day(client, samples):
+    upload(client, samples / "http_scenarios.pcap")
+    upload(client, samples / "http_scenarios.pcap")
+    assert client.get("/").text.count('class="day"') == 1

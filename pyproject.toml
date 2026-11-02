@@ -32,6 +32,7 @@ version = { attr = "pcap_analyzer.__version__" }
 where = ["src"]
 
 [tool.setuptools.package-data]
+"pcap_analyzer" = ["knowledge.bin"]
 "pcap_analyzer.web" = ["templates/*.html", "static/*", "static/vendor/*"]
 
 [tool.pytest.ini_options]

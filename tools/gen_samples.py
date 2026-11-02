@@ -116,7 +116,8 @@ class Conn:
         self.emit(t + 2 * rtt, from_c, ACK)
         return t + 2 * rtt
 
-    def rst(self, t, from_c):
+    def rst(self, t, from_c, window=None):
+        self.win[from_c] = self.win[from_c] if window is None else window
         self.emit(t, from_c, RST | ACK)
 
 
@@ -205,7 +206,7 @@ def gen_http(out, truth):
     c = Conn(w, cl, 40005, srv, 8080)  # unanswered, server resets after 30 s
     t = c.handshake(T0 + 12)
     t = c.send(t + 0.01, True, req("GET", "/api/slow"))
-    c.rst(t + 30, False)
+    c.rst(t + 30, False, window=9300)
     rec("unanswered", "timeout", rst_by="server", wait=30)
 
     c = Conn(w, cl, 40006, srv, 8080)  # gateway errors
@@ -447,6 +448,61 @@ def gen_netscaler(out, certdir, truth):
     truth["netscaler_front.pcap+netscaler_back.pcap"] = tr
 
 
+def gen_backends(out, truth):
+    """Three servers behind a load balancer. One is slow, and one starts failing at a known moment."""
+    w = PcapWriter(out / "backends.pcap")
+    servers = {"10.50.0.1": 0.02, "10.50.0.2": 0.02, "10.50.0.3": 1.0}
+    first_error = None
+    for i in range(30):
+        ip = list(servers)[i % 3]
+        c = Conn(w, "10.30.0.5", 51000 + i, ip, 8080)
+        t = T0 + i * 2
+        t1 = c.handshake(t)
+        t2 = c.send(t1 + 0.001, True, req("GET", f"/api/data/{i}"))
+        failing = ip == "10.50.0.2" and i >= 16
+        if failing and first_error is None:
+            first_error = t
+        t3 = c.send(t2 + servers[ip], False, resp(503, reason="Service Unavailable", body=b"busy") if failing else resp(200, b"ok"))
+        c.close(t3 + 0.01)
+    w.close()
+    truth["backends.pcap"] = dict(slow="10.50.0.3", failing="10.50.0.2", first_error=first_error)
+
+
+def gen_poor(out, truth):
+    """A capture with known gaps: one side missing, packets the capture lost, and connections cut at both ends."""
+    w = PcapWriter(out / "poor_capture.pcap")
+    c = Conn(w, "10.60.0.1", 52000, "10.60.0.2", 8080)  # only the client side is visible
+    t = T0
+    c.emit(t, True, SYN)
+    c.emit(t + 0.01, True, PSH | ACK, req("GET", "/one-way"))
+    c = Conn(w, "10.60.0.1", 52001, "10.60.0.2", 8080)  # the server acknowledges data the capture never saw
+    t1 = c.handshake(t + 1)
+    t2 = c.send(t1 + 0.001, True, req("GET", "/gap"))
+    c.seq[True] += 5000
+    c.emit(t2 + 0.01, False, ACK)
+    c.send(t2 + 0.02, True, b"z" * 100)
+    c = Conn(w, "10.60.0.1", 52002, "10.60.0.2", 8080)  # started before the capture and never closed
+    c.send(t + 2, True, req("GET", "/mid"))
+    c.send(t + 2.1, False, resp(200, b"ok"))
+    w.close()
+    truth["poor_capture.pcap"] = dict(unseen=1, one_way=1)
+
+
+def gen_split(out, truth):
+    """Long headers that do not fit one segment, and a body in a segment of its own."""
+    w = PcapWriter(out / "split_headers.pcap")
+    c = Conn(w, "10.60.0.3", 53000, "10.60.0.4", 8080)
+    t = c.handshake(T0)
+    for i in range(3):
+        t = c.send(t + 0.01, True, req("GET", f"/long/{i}", extra=["Cookie: a=" + "b" * 3000, "X-Tail: 1"]))
+        head = b"HTTP/1.1 200 OK\r\nContent-Length: 500\r\nX-Pad: " + b"p" * 3000 + b"\r\n\r\n"
+        t = c.send(t + 0.1, False, head)
+        t = c.send(t + 0.01, False, b"y" * 500)
+    c.close(t + 0.01)
+    w.close()
+    truth["split_headers.pcap"] = dict(requests=3)
+
+
 def gen_perf(out, certdir, truth):
     target = 100 * 1024 * 1024
     for name, use_tls in (("perf_http_100mb.pcap", False), ("perf_https_100mb.pcap", True)):
@@ -494,6 +550,9 @@ def main():
     gen_tls(out, out, truth)
     gen_h2(out, out, truth)
     gen_netscaler(out, out, truth)
+    gen_backends(out, truth)
+    gen_poor(out, truth)
+    gen_split(out, truth)
     if "--perf" in sys.argv:
         gen_perf(out, out, truth)
     (out / "truth.json").write_text(json.dumps(truth, indent=2))

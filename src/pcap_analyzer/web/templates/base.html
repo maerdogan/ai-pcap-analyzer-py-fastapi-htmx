@@ -1,6 +1,6 @@
-{% import "_macros.html" as ui %}
+{% import "_macros.html" as ui with context %}
 <!doctype html>
-<html lang="en">
+<html lang="{{ lang() }}">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -14,19 +14,34 @@
   <script src="/static/vendor/echarts.min.js" defer></script>
   <script src="/static/app.js?v={{ version }}" defer></script>
 </head>
-<body class="shell">
-  <aside class="side">
-    <a class="brand" href="/">{{ ui.mark() }}<span>pcap-analyzer</span></a>
-    <nav class="side-nav" aria-label="Main">
-      <a href="/" {% if section == "captures" %}aria-current="page"{% endif %}>Captures</a>
-      <a href="/compare" {% if section == "compare" %}aria-current="page"{% endif %}>Compare</a>
-    </nav>
-    {% block capture_nav %}{% endblock %}
-    <div class="side-foot">
-      <form method="post" action="/logout"><button class="side-link">Sign out</button></form>
-      <span>Version {{ version }}</span>
+<body data-words='{{ js_words() | tojson }}' hx-headers='{"X-CSRF-Token": "{{ form_token() }}"}'>
+  {% set recent = recent_captures() %}
+  {% if recent %}
+  <nav class="ticker" aria-label="{{ _("Recent captures") }}">
+    <span class="ticker-name">{{ _("Recent captures") }}</span>
+    <ol>
+      {% for r in recent %}
+      <li><a href="/a/{{ r.id }}" title="{{ r.filename }}" {% if a and a.id == r.id %}aria-current="true"{% endif %}><time>{{ r.created | clock }}</time><b>{{ r.filename }}</b><span>{{ _("{n} requests", n=r.transactions) }}</span></a></li>
+      {% endfor %}
+    </ol>
+  </nav>
+  {% endif %}
+  <header class="bar">
+    <div class="bar-row">
+      <a class="brand" href="/">{{ ui.mark() }}<span>pcap-analyzer</span></a>
+      <nav class="sections" aria-label="{{ _("Main") }}">
+        <a href="/" {% if section == "captures" %}aria-current="page"{% endif %}>{{ _("Captures") }}</a>
+        <a href="/compare" {% if section == "compare" %}aria-current="page"{% endif %}>{{ _("Compare") }}</a>
+        <a href="/capture-guide" {% if section == "guide" %}aria-current="page"{% endif %}>{{ _("Capture guide") }}</a>
+      </nav>
+      <div class="bar-end">
+        {{ ui.language_form(request) }}
+        <form method="post" action="/logout"><input type="hidden" name="csrf_token" value="{{ form_token() }}"><button>{{ _("Sign out") }}</button></form>
+      </div>
     </div>
-  </aside>
+    {% block capture_nav %}{% endblock %}
+  </header>
   <main class="page">{% block main %}{% endblock %}</main>
+  <footer class="foot">{{ _("Version {n}", n=version) }}</footer>
 </body>
 </html>

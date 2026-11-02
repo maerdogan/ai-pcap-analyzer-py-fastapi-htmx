@@ -1,48 +1,55 @@
 {% extends "base.html" %}
-{% import "_macros.html" as ui %}
-{% block title %}Connection {{ d.conn.stream }}{% endblock %}
+{% import "_macros.html" as ui with context %}
+{% block title %}{{ _("Connection {n}", n=d.conn.stream) }}{% endblock %}
 {% block capture_nav %}{{ ui.capnav(a, "connections", issue_count) }}{% endblock %}
 {% block main %}
 {% set c = d.conn %}
-<p class="back"><a href="/a/{{ a.id }}?tab=connections">Connections</a></p>
-<header class="page-head">
+{{ ui.crumbs([(_("Captures"), "/"), (m.filename, "/a/" ~ a.id), (_("Connections"), "/a/" ~ a.id ~ "?tab=connections"), (c.client_ip ~ ":" ~ c.client_port, None)]) }}
+<header class="hero">
+  <div class="hero-head">
   <div>
-    <h1>{{ c.client_ip }}:{{ c.client_port }} to {{ c.server_ip }}:{{ c.server_port }}</h1>
-    <p class="muted">{{ c.kind }}, {{ d.total }} requests, open for {{ c.duration | seconds }}.
-    {% if c.close_type %}Closed by the {{ c.closed_by }} with {{ c.close_type }}.{% else %}Still open when the capture ended.{% endif %}</p>
+    <h1>{{ _("Connection {n}", n=c.stream) }}</h1>
+    <p class="muted">{{ _("{kind}, {n} requests, open for {time}.", kind=c.kind, n=d.total, time=c.duration | seconds) }}
+    {% if c.close_type %}{{ _("Closed by the client with {how}.", how=c.close_type) if c.closed_by == "client" else _("Closed by the server with {how}.", how=c.close_type) }}{% else %}{{ _("Still open when the capture ended.") }}{% endif %}</p>
   </div>
-  {% if m.capture_kept %}<div class="actions"><a class="button" href="/export/{{ a.id }}/conn/{{ c.stream }}.pcapng">Download this connection as PCAP</a></div>{% endif %}
+  {% if m.capture_kept %}<div class="actions"><a class="button" href="/export/{{ a.id }}/conn/{{ c.stream }}.pcapng">{{ _("Download this connection as PCAP") }}</a></div>{% endif %}
+  </div>
+  <div class="score ends">
+    <div class="score-side"><small>{{ _("Client") }}</small><b>{{ c.client_ip }}:{{ c.client_port }}</b></div>
+    <div class="score-mid"><strong>{{ d.total }}</strong><small>{{ _("Requests") }}</small></div>
+    <div class="score-side"><small>{{ _("Server") }}</small><b>{{ c.server_ip }}:{{ c.server_port }}</b></div>
+  </div>
 </header>
 {% if d.top %}
 <section class="panel flush">
   <div class="section-head">
-    <h2>Slowest requests</h2>
+    <h2>{{ _("Slowest requests") }}</h2>
     <p class="switch">
-      <a href="?percent=false" {% if not percent %}aria-current="true"{% endif %}>First 5</a>
-      <a href="?percent=true" {% if percent %}aria-current="true"{% endif %}>Top 10%</a>
+      <a href="?percent=false" {% if not percent %}aria-current="true"{% endif %}>{{ _("First 5") }}</a>
+      <a href="?percent=true" {% if percent %}aria-current="true"{% endif %}>{{ _("Top 10%") }}</a>
     </p>
   </div>
   {{ ui.waterfall(d.top, a) }}
 </section>
 {% endif %}
 <section class="panel">
-  <h2>TCP details</h2>
+  <h2>{{ _("TCP details") }}</h2>
   <dl class="facts">
-    <div><dt>Connect time</dt><dd>{{ c.connect_time | seconds }}</dd></div>
-    <div><dt>Round trip to server</dt><dd>{{ c.rtt_server | seconds }}</dd></div>
-    <div><dt>Round trip to client</dt><dd>{{ c.rtt_client | seconds }}</dd></div>
-    <div><dt>Capture point</dt><dd>{{ c.capture_point | replace("_", " ") | capitalize }}</dd></div>
+    <div><dt>{{ _("Connect time") }}</dt><dd>{{ c.connect_time | seconds }}</dd></div>
+    <div><dt>{{ _("Round trip to server") }}</dt><dd>{{ c.rtt_server | seconds }}</dd></div>
+    <div><dt>{{ _("Round trip to client") }}</dt><dd>{{ c.rtt_client | seconds }}</dd></div>
+    <div><dt>{{ _("Capture point") }}</dt><dd>{{ _(c.capture_point | replace("_", " ") | capitalize) }}</dd></div>
     <div><dt>MSS</dt><dd>{{ c.mss or "–" }}</dd></div>
-    <div><dt>SACK</dt><dd>{{ "Yes" if c.sack else "No" }}</dd></div>
-    <div><dt>Window scale</dt><dd>{{ c.wscale if c.wscale is not none else "–" }}</dd></div>
-    <div><dt>Smallest window</dt><dd>{{ c.min_window if c.min_window is not none else "–" }}</dd></div>
-    <div><dt>Retransmissions</dt><dd>{{ c.retransmissions }}</dd></div>
-    <div><dt>Zero windows</dt><dd>{{ c.zero_windows }}</dd></div>
-    <div><dt>Client sent</dt><dd>{{ c.payload_client | size }}</dd></div>
-    <div><dt>Server sent</dt><dd>{{ c.payload_server | size }}</dd></div>
-    <div><dt>Byte ratio</dt><dd>{{ c.byte_ratio_db }} dB</dd></div>
+    <div><dt>SACK</dt><dd>{{ _("Yes") if c.sack else _("No") }}</dd></div>
+    <div><dt>{{ _("Window scale") }}</dt><dd>{{ c.wscale if c.wscale is not none else "–" }}</dd></div>
+    <div><dt>{{ _("Smallest window") }}</dt><dd>{{ c.min_window if c.min_window is not none else "–" }}</dd></div>
+    <div><dt>{{ _("Retransmissions") }}</dt><dd>{{ c.retransmissions }}</dd></div>
+    <div><dt>{{ _("Zero windows") }}</dt><dd>{{ c.zero_windows }}</dd></div>
+    <div><dt>{{ _("Client sent") }}</dt><dd>{{ c.payload_client | size }}</dd></div>
+    <div><dt>{{ _("Server sent") }}</dt><dd>{{ c.payload_server | size }}</dd></div>
+    <div><dt>{{ _("Byte ratio") }}</dt><dd>{{ c.byte_ratio_db }} dB</dd></div>
     {% if c.tls_version %}<div><dt>TLS</dt><dd>{{ c.tls_version }}</dd></div>{% endif %}
-    {% if c.sni %}<div><dt>Server name</dt><dd>{{ c.sni }}</dd></div>{% endif %}
+    {% if c.sni %}<div><dt>{{ _("Server name") }}</dt><dd>{{ c.sni }}</dd></div>{% endif %}
   </dl>
 </section>
 {% endblock %}

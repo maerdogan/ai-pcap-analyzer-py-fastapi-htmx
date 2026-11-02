@@ -1,22 +1,23 @@
-{% import "_macros.html" as ui %}
+{% import "_macros.html" as ui with context %}
 <!doctype html>
-<html lang="en">
+<html lang="{{ lang() }}">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Sign in to pcap-analyzer</title>
+  <title>{{ _("Sign in to pcap-analyzer") }}</title>
   <link rel="stylesheet" href="/static/app.css?v={{ version }}">
 </head>
 <body class="login-page">
   <main class="login">
     <div class="login-mark">{{ ui.mark() }}<span>pcap-analyzer</span></div>
-    <h1>Sign in</h1>
-    <p class="muted">See where the time went in your HTTP traffic.</p>
+    <h1>{{ _("Sign in") }}</h1>
+    <p class="muted">{{ _("See where the time went in your HTTP traffic.") }}</p>
     {% if error %}<p class="error" role="alert">{{ error }}</p>{% endif %}
+    {{ ui.language_form(request) }}
     <form method="post" action="/login">
-      <label>User name <input name="username" autocomplete="username" required autofocus></label>
-      <label>Password <input name="password" type="password" autocomplete="current-password" required></label>
-      <button class="primary wide">Sign in</button>
+      <label>{{ _("User name") }} <input name="username" autocomplete="username" required autofocus></label>
+      <label>{{ _("Password") }} <input name="password" type="password" autocomplete="current-password" required></label>
+      <button class="primary wide">{{ _("Sign in") }}</button>
     </form>
   </main>
 </body>

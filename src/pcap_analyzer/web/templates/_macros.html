@@ -1,5 +1,5 @@
 {% macro mark() %}
-<svg class="mark" viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><rect x="2" y="4" width="11" height="4"/><rect x="2" y="10" width="20" height="4"/><rect x="2" y="16" width="6" height="4"/></svg>
+<svg class="mark" viewBox="0 0 24 24" width="24" height="24" aria-hidden="true"><rect x="2" y="4" width="11" height="4"/><rect x="2" y="10" width="20" height="4"/><rect x="2" y="16" width="6" height="4"/></svg>
 {% endmacro %}
 
 {% macro strip(phases) %}
@@ -12,17 +12,54 @@
 {% macro breakdown(phases) %}
 {% set total = phases | sum(attribute="seconds") %}
 <table class="breakdown">
-  <thead><tr><th>Phase</th><th class="num">Time</th><th class="num">Share</th></tr></thead>
+  <thead><tr><th>{{ _("Phase") }}</th><th class="num">{{ _("Time") }}</th><th class="num">{{ _("Share") }}</th></tr></thead>
   <tbody>
     {% for p in phases | sort(attribute="seconds", reverse=True) %}
-    <tr><td><i class="swatch ph-{{ p.name }}"></i>{{ p.label }}</td><td class="num">{{ p.seconds | seconds }}</td><td class="num">{{ "%.1f" | format(p.seconds / total * 100) if total else 0 }}%</td></tr>
+    <tr><td title="{{ p.about }}"><i class="swatch ph-{{ p.name }}"></i>{{ p.label }}</td><td class="num">{{ p.seconds | seconds }}</td><td class="num">{{ _("{n}%", n="%.1f" | format(p.seconds / total * 100) if total else 0) }}</td></tr>
     {% endfor %}
   </tbody>
 </table>
 {% endmacro %}
 
+{% macro rich(line) %}{% for part in line.split("`") %}{% if loop.index0 % 2 %}<code>{{ part }}</code>{% else %}{{ part }}{% endif %}{% endfor %}{% endmacro %}
+
+{% macro guide(g) %}
+<section class="panel guide">
+  <h2>{{ g.headings.title }}</h2>
+  <h3>{{ g.headings.meaning }}</h3>
+  <p>{{ g.meaning }}</p>
+  {% if g.evidence %}<h3>{{ g.headings.evidence }}</h3><ul>{% for line in g.evidence %}<li>{{ rich(line) }}</li>{% endfor %}</ul>{% endif %}
+  <h3>{{ g.headings.checks }}</h3>
+  <ul>{% for line in g.checks %}<li>{{ rich(line) }}</li>{% endfor %}</ul>
+  {% if g.misread %}<h3>{{ g.headings.misread }}</h3><p>{{ rich(g.misread) }}</p>{% endif %}
+  <h3>{{ g.headings.sources }}</h3>
+  <ul class="sources">{% for s in g.sources %}<li><a href="{{ s.url }}" rel="noreferrer noopener">{{ s.title }}</a>{% if s.where %}: {{ s.where }}{% endif %}</li>{% endfor %}</ul>
+  <p class="hint">{{ g.headings.origin }}</p>
+</section>
+{% endmacro %}
+
+{% macro language_form(request) %}
+<form method="post" action="/language" class="language">
+  <input type="hidden" name="back" value="{{ request.url.path }}{% if request.url.query %}?{{ request.url.query }}{% endif %}">
+  <label><span>{{ _("Language") }}</span>
+    <select name="language" data-submit>{% for code, name in languages() %}<option value="{{ code }}" {% if code == lang() %}selected{% endif %}>{{ name }}</option>{% endfor %}</select>
+  </label>
+  <noscript><button>{{ _("Save") }}</button></noscript>
+</form>
+{% endmacro %}
+
+{% macro quality(q) %}
+{% if q %}
+<section class="panel trust trust-{{ q.level }}">
+  <h2>{{ _("Capture trust: {level}", level=q.label) }}</h2>
+  {% if q.findings %}<ul>{% for f in q.findings %}<li>{{ f.text }}</li>{% endfor %}</ul>
+  {% else %}<p>{{ _("No problems were found in the capture itself.") }}</p>{% endif %}
+</section>
+{% endif %}
+{% endmacro %}
+
 {% macro status(code) %}
-<span class="status s{{ (code // 100) if code else 0 }}">{{ code or "None" }}</span>
+<span class="status s{{ (code // 100) if code else 0 }}">{{ code or _("None") }}</span>
 {% endmacro %}
 
 {% macro waterfall(rows, a, link=True) %}
@@ -36,33 +73,79 @@
       {% else %}<span class="wf-url">{{ t.method }} {{ t.uri | truncate(90, True, "…") }}</span>{% endif %}
       <p class="why"><b>{{ t.cause_label }}.</b> {{ t.explanation }}</p>
     </div>
-    <div class="wf-bar"><div class="bar" style="width:{{ ((t.longest / longest * 100) if longest else 0) | round(1) }}%">{{ strip(t.phases) }}</div></div>
+    <div class="wf-bar"><div class="bar-fill" style="width:{{ ((t.longest / longest * 100) if longest else 0) | round(1) }}%">{{ strip(t.phases) }}</div></div>
     <span class="took">{{ t.longest | seconds }}</span>
   </li>
   {% endfor %}
 </ol>
 {% endmacro %}
 
-{% macro stats(s) %}
+{% macro stats(s, scored=False) %}
 <dl class="metrics">
-  <div><dt>Requests</dt><dd>{{ s.requests or 0 }}</dd></div>
-  <div><dt>Successful</dt><dd>{{ s.ok or 0 }}</dd></div>
-  <div {% if s.failed %}class="alert"{% endif %}><dt>Failed</dt><dd>{{ s.failed or 0 }}</dd></div>
-  <div><dt>Average</dt><dd>{{ s.avg_total | seconds }}</dd></div>
-  <div><dt>Median</dt><dd>{{ s.p50_total | seconds }}</dd></div>
-  <div><dt>95th percentile</dt><dd>{{ s.p95_total | seconds }}</dd></div>
-  <div><dt>Slowest</dt><dd>{{ s.max_total | seconds }}</dd></div>
+  <div><dt>{{ _("Requests") }}</dt><dd>{{ s.requests or 0 }}</dd></div>
+  {% if not scored %}
+  <div><dt>{{ _("Successful") }}</dt><dd>{{ s.ok or 0 }}</dd></div>
+  <div {% if s.failed %}class="alert"{% endif %}><dt>{{ _("Failed") }}</dt><dd>{{ s.failed or 0 }}</dd></div>
+  {% endif %}
+  <div><dt>{{ _("Average") }}</dt><dd>{{ s.avg_total | seconds }}</dd></div>
+  <div><dt>{{ _("Median") }}</dt><dd>{{ s.p50_total | seconds }}</dd></div>
+  <div><dt>{{ _("95th percentile") }}</dt><dd>{{ s.p95_total | seconds }}</dd></div>
+  <div><dt>{{ _("Slowest") }}</dt><dd>{{ s.max_total | seconds }}</dd></div>
 </dl>
 {% endmacro %}
 
+{% macro score(s) %}
+<div class="score">
+  <div class="score-side"><b class="good">{{ _("Successful") }}</b></div>
+  <div class="score-mid">
+    <strong><span class="good">{{ s.ok or 0 }}</span><i>–</i><span {% if s.failed %}class="bad"{% endif %}>{{ s.failed or 0 }}</span></strong>
+    <small>{{ _("95th percentile") }}: {{ s.p95_total | seconds }}</small>
+  </div>
+  <div class="score-side"><b {% if s.failed %}class="bad"{% endif %}>{{ _("Failed") }}</b></div>
+</div>
+{% endmacro %}
+
+{% macro crumbs(steps) %}
+<nav class="crumbs" aria-label="{{ _("Location") }}"><ol>
+  {% for label, href in steps %}<li>{% if href %}<a href="{{ href }}">{{ label }}</a>{% else %}{{ label }}{% endif %}</li>{% endfor %}
+</ol></nav>
+{% endmacro %}
+
+{% macro duel(rows) %}
+<ul class="duel">
+  {% for r in rows %}
+  {% set is_time = r.is_time is not defined or r.is_time %}
+  {% set top = [r.a or 0, r.b or 0] | max %}
+  <li>
+    <div class="duel-row">
+      <b>{% if is_time %}{{ r.a | seconds }}{% else %}{{ r.a if r.a is not none else "–" }}{% endif %}</b>
+      <span class="duel-name">{{ r.label }}
+        <small class="{{ 'up' if r.delta and r.delta > 0 else 'down' if r.delta and r.delta < 0 else '' }}">{% if r.delta is none %}–{% elif is_time %}{{ "+" if r.delta > 0 else "" }}{{ (r.delta * 1000) | round(1) }} ms{% else %}{{ "+" if r.delta > 0 else "" }}{{ r.delta }}{% endif %}{% if r.percent is defined and r.percent is not none %} ({{ "%+.0f%%" | format(r.percent) }}){% endif %}</small>
+      </span>
+      <b>{% if is_time %}{{ r.b | seconds }}{% else %}{{ r.b if r.b is not none else "–" }}{% endif %}</b>
+    </div>
+    <div class="duel-bars" aria-hidden="true">
+      <div><span style="width:{{ (((r.a or 0) / top * 100) if top else 0) | round(1) }}%"></span></div>
+      <div><span style="width:{{ (((r.b or 0) / top * 100) if top else 0) | round(1) }}%"></span></div>
+    </div>
+  </li>
+  {% endfor %}
+</ul>
+{% endmacro %}
+
 {% macro capnav(a, current, issue_count=0) %}
-<nav class="side-nav capture" aria-label="Capture views">
-  <p class="side-file" title="{{ a.meta.filename }}">{{ a.meta.filename }}</p>
-  <a href="/a/{{ a.id }}" {% if current == "overview" %}aria-current="page"{% endif %}>Overview</a>
-  <a href="/a/{{ a.id }}?tab=issues" {% if current == "issues" %}aria-current="page"{% endif %}>Issues{% if issue_count %}<span class="count">{{ issue_count }}</span>{% endif %}</a>
-  <a href="/a/{{ a.id }}?tab=urls" {% if current == "urls" %}aria-current="page"{% endif %}>URLs</a>
-  <a href="/a/{{ a.id }}?tab=connections" {% if current == "connections" %}aria-current="page"{% endif %}>Connections</a>
-  <a href="/a/{{ a.id }}?tab=hosts" {% if current == "hosts" %}aria-current="page"{% endif %}>Hosts</a>
-  <a href="/a/{{ a.id }}/inspect" {% if current == "inspect" %}aria-current="page"{% endif %}>Inspect traffic</a>
-</nav>
+<div class="views-row">
+  <nav class="views" aria-label="{{ _("Capture views") }}">
+    <a href="/a/{{ a.id }}" {% if current == "overview" %}aria-current="page"{% endif %}>{{ _("Overview") }}</a>
+    <a href="/a/{{ a.id }}?tab=issues" {% if current == "issues" %}aria-current="page"{% endif %}>{{ _("Issues") }}{% if issue_count %}<span class="count">{{ issue_count }}</span>{% endif %}</a>
+    <a href="/a/{{ a.id }}?tab=urls" {% if current == "urls" %}aria-current="page"{% endif %}>{{ _("URLs") }}</a>
+    <a href="/a/{{ a.id }}?tab=connections" {% if current == "connections" %}aria-current="page"{% endif %}>{{ _("Connections") }}</a>
+    <a href="/a/{{ a.id }}?tab=hosts" {% if current == "hosts" %}aria-current="page"{% endif %}>{{ _("Hosts") }}</a>
+    <a href="/a/{{ a.id }}?tab=backends" {% if current == "backends" %}aria-current="page"{% endif %}>{{ _("Servers") }}</a>
+    <a href="/a/{{ a.id }}/inspect" {% if current == "inspect" %}aria-current="page"{% endif %}>{{ _("Inspect traffic") }}</a>
+  </nav>
+  <form class="search" method="get" action="/a/{{ a.id }}/inspect" role="search">
+    <input type="search" name="url" aria-label="{{ _("Search URLs in this capture") }}" placeholder="{{ _("Search URLs in this capture") }}">
+  </form>
+</div>
 {% endmacro %}
