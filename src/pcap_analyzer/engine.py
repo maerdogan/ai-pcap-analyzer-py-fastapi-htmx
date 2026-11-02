@@ -87,7 +87,7 @@ def join_parts(paths, folder, settings):
     if len(parts) == 1:
         return parts[0]
     out = Path(folder) / "merged.pcapng"
-    tshark.merge(parts, out, settings.mergecap)
+    tshark.merge(parts, out, settings.mergecap, settings.tshark)
     return out
 
 

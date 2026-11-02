@@ -74,7 +74,7 @@ kubectl -n pcap-analyzer port-forward deploy/pcap-analyzer 8000:8000
 
 ## Linux server without sudo
 
-[linux-glibc2.26-server](../linux-glibc2.26-server/README.md) runs the app as a normal user from one folder, with Python, its packages and tshark included. It needs no Docker, systemd or internet.
+[linux-glibc2.26-server](../linux-glibc2.26-server/README.md) runs the app as a normal user from one folder, with Python, its packages and tshark included. It needs no Docker, systemd or internet. For glibc 2.17, such as CentOS 7, use [linux-glibc2.17-server](../linux-glibc2.17-server/README.md).
 
 ## Linux server with systemd
 

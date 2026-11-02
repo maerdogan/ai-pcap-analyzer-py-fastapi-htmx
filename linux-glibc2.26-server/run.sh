@@ -11,7 +11,7 @@ RUNTIME=$HERE/runtime
 PIDFILE=$HERE/pcap-analyzer.pid
 LOG=$HERE/pcap-analyzer.log
 ENV_FILE=$HERE/.env
-MIN_GLIBC=2.26
+MIN_GLIBC=${PCAP_ANALYZER_MIN_GLIBC:-2.26}
 
 die() { echo "error: $*" >&2; exit 1; }
 
@@ -34,6 +34,15 @@ unpack() {
   rm -rf "$RUNTIME"
   cat "$HERE"/bundle/runtime-linux-x86_64.tar.gz.part-* | tar xzf - -C "$HERE"
   cp "$HERE/bundle/runtime.sha256" "$RUNTIME/.bundle.sha256"
+}
+
+use_older_duckdb() { # linux-glibc2.17-server sets the wheel to put in the runtime
+  local wheel=${PCAP_ANALYZER_DUCKDB_WHEEL:-} site
+  [[ -n $wheel && ! -f $RUNTIME/.older-duckdb ]] || return 0
+  site=$("$RUNTIME/python/bin/python3" -c "import site; print(site.getsitepackages()[0])")
+  rm -rf "$site"/duckdb "$site"/_duckdb* "$site"/duckdb-*
+  "$RUNTIME/python/bin/python3" -m zipfile -e "$wheel" "$site"
+  touch "$RUNTIME/.older-duckdb"
 }
 
 load_env() {
@@ -145,6 +154,7 @@ esac
 check_host
 [[ -f $SRC/pcap_analyzer/cli.py ]] || die "$SRC is missing. Keep this folder inside the repository, next to src/"
 unpack
+use_older_duckdb
 load_env
 
 case $cmd in

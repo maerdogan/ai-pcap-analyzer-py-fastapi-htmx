@@ -195,8 +195,30 @@ def _limits(seconds):
     return apply
 
 
-def merge(paths, out, binary="mergecap"):
+def _first_packet(path, reader):
+    done = subprocess.run([reader, "-n", "-r", str(path), "-c", "1", "-T", "fields", "-e", "frame.time_epoch"], capture_output=True, text=True)
+    if done.returncode != 0:
+        raise TsharkError(done.stderr.strip().splitlines()[-1] if done.stderr.strip() else "tshark could not read a part")
+    return float(done.stdout.strip() or 0)
+
+
+def _join_sections(paths, out, reader):
+    """Without mergecap: a pcapng file may hold several sections, so parts can follow each other in the order they start."""
+    with open(out, "wb") as joined:
+        for i, path in enumerate(sorted(paths, key=lambda p: _first_packet(p, reader))):
+            section = Path(out).with_suffix(f".{i}")
+            done = subprocess.run([reader, "-n", "-r", str(path), "-F", "pcapng", "-w", str(section)], capture_output=True, text=True)
+            if done.returncode != 0:
+                raise TsharkError(done.stderr.strip().splitlines()[-1] if done.stderr.strip() else "tshark could not read a part")
+            joined.write(section.read_bytes())
+            section.unlink()
+
+
+def merge(paths, out, binary="mergecap", reader="tshark"):
     """Join parts of one capture into a single file, in time order."""
+    if not shutil.which(binary):
+        _join_sections(paths, out, reader)
+        return
     try:
         done = subprocess.run([binary, "-w", str(out), *map(str, paths)], capture_output=True, text=True)
     except OSError as e:

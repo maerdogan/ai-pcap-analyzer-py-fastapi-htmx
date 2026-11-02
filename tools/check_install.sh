@@ -76,33 +76,34 @@ systemd_check() {
 }
 
 bundle() {
-  local image=${1:?give an image, such as ubuntu:18.04} folder=$ROOT/linux-glibc2.26-server
+  local image=${1:?give an image, such as ubuntu:18.04} run=${2:-linux-glibc2.26-server} folder=$ROOT/linux-glibc2.26-server
   capture
   # A real server has tar, as the README asks, but a minimal image may not. Such an image gets the runtime already unpacked.
   mkdir "$WORK/unpacked"
   cat "$folder"/bundle/runtime-linux-x86_64.tar.gz.part-* | tar xzf - -C "$WORK/unpacked"
   cp "$folder/bundle/runtime.sha256" "$WORK/unpacked/runtime/.bundle.sha256"
   chmod -R a+rX "$WORK"
-  docker run --rm --network none --user 1000:1000 --tmpfs /tmp:exec,mode=1777 -e HOME=/tmp -e PCAP_ANALYZER_SMOKE_PASSWORD \
+  docker run --rm --network none --user 1000:1000 --tmpfs /tmp:exec,mode=1777 -e HOME=/tmp -e PCAP_ANALYZER_SMOKE_PASSWORD -e RUN="$run" \
     -v "$ROOT:/repo:ro" -v "$WORK:/work:ro" "$image" sh -c '
     set -e
     getconf GNU_LIBC_VERSION
     mkdir /tmp/repo
-    cp -r /repo/src /repo/tools /repo/linux-glibc2.26-server /tmp/repo/
+    cp -r /repo/src /repo/tools /repo/linux-glibc2.26-server /repo/linux-glibc2.17-server /tmp/repo/
     cd /tmp/repo/linux-glibc2.26-server
     rm -rf runtime data .env
     command -v tar >/dev/null || cp -a /work/unpacked/runtime .
-    printf "%s\n" "$PCAP_ANALYZER_SMOKE_PASSWORD" | ./run.sh password 2>&1 | grep -v -i "getpass\|echo\|stream"
-    ./run.sh start
+    printf "%s\n" "$PCAP_ANALYZER_SMOKE_PASSWORD" | ../$RUN/run.sh password 2>&1 | grep -v -i "getpass\|echo\|stream"
+    ../$RUN/run.sh start
     runtime/python/bin/python3 ../tools/smoke.py http://127.0.0.1:8000 /work/samples/http_scenarios.pcap
     runtime/tshark/bin/tshark --version | head -1
-    ./run.sh stop'
+    runtime/python/bin/python3 -c "import duckdb; print(\"duckdb\", duckdb.__version__)"
+    ../$RUN/run.sh stop'
 }
 
 case ${1:-} in
   compose) compose ;;
   systemd) systemd_check ;;
-  bundle) bundle "${2:-}" ;;
+  bundle) bundle "${2:-}" "${3:-linux-glibc2.26-server}" ;;
   *) sed -n '2,6p' "$0"; exit 2 ;;
 esac
 rm -rf "$WORK"

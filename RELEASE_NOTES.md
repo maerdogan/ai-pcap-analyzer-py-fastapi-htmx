@@ -17,10 +17,11 @@ All changes made on the same day are one minor version.
 - W3C `traceparent` gives an exact match between two capture points. `PCAP_ANALYZER_REQUEST_ID_HEADER` sets another header name.
 - TLS tab: versions, ciphers, ALPN, resumed sessions, unanswered ClientHello, alerts and certificate end dates, without a key.
 - WebSocket upgrades are measured on their own, so a long-lived connection no longer counts as slow. gRPC status from HTTP/2 trailers, with a gRPC errors issue.
-- gzip captures open, and unpacking stops at the size limit. Several parts of one capture can be joined with `mergecap`.
+- gzip captures open, and unpacking stops at the size limit. Several parts of one capture can be joined, with `mergecap` or, where it is missing, with tshark alone.
 - tshark runs with CPU and file limits. Where the host allows user namespaces, it also runs without network and sees only its own files. `PCAP_ANALYZER_SANDBOX=0` turns that off.
-- `kubernetes/helm/pcap-analyzer` chart, `tools/pcap-collect.sh` to capture from one or two places and upload, `docs/usage.md` and `docs/api.md`.
-- `requirements.lock`, a pinned base image, a dependency audit in CI and an SBOM in each Release.
+- `kubernetes/helm/pcap-analyzer` chart, `tools/pcap-collect.sh` to capture from servers, pods and worker nodes at the same time and upload, `docs/usage.md` and `docs/api.md`.
+- `requirements.lock`, a pinned base image, a dependency audit in CI, an SBOM in each Release and a signed record of how each image was built.
+- `linux-glibc2.17-server` for CentOS 7 and similar hosts.
 - `SECURITY.md`, `CONTRIBUTING.md`, issue templates, and exact source locations for GPL components in `THIRD_PARTY.md`.
 
 ### Changed

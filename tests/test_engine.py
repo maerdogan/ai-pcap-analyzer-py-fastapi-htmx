@@ -376,3 +376,12 @@ def test_purge_removes_stale_temp_files_only(settings, tmp_path):
     engine.purge(settings, tmp_root=root)
     assert not any(d.exists() for d in stale)
     assert fresh.exists() and other.exists()
+
+
+def test_parts_join_without_mergecap(samples, settings, tmp_path):
+    settings.mergecap = "no-such-program"
+    a, b = samples / "http_scenarios.pcap", samples / "https_tls13.pcap"
+    joined = engine.join_parts([b, a], tmp_path, settings)
+    got = engine.analyze(joined, settings=settings, display_name="both")
+    each = [engine.analyze(p, settings=settings).meta["packets"] for p in (a, b)]
+    assert got.meta["packets"] == sum(each)

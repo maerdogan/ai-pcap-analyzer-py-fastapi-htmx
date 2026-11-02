@@ -43,6 +43,7 @@ jobs:
           - bundle ubuntu:18.04
           - bundle rockylinux:8
           - bundle opensuse/leap:15.0
+          - bundle centos:7 linux-glibc2.17-server
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:

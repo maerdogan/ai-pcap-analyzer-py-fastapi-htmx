@@ -17,6 +17,8 @@ The container image also includes [Wireshark's tshark](https://www.wireshark.org
 - Wireshark's tshark, the libraries it loads and the musl C library, from [Alpine Linux](https://alpinelinux.org/) packages. tshark is licensed under GPL-2.0-or-later, and the libraries have their own licenses. Sources are available from [Alpine aports](https://gitlab.alpinelinux.org/alpine/aports) and from each project.
 - The Python packages listed in `pyproject.toml`, and those they need.
 
+`linux-glibc2.17-server/` holds the unchanged DuckDB 1.2.2 wheel from PyPI, licensed under MIT.
+
 Python dependencies are listed in `pyproject.toml`, and `requirements.lock` holds the exact versions.
 
 ## Source code for GPL components
