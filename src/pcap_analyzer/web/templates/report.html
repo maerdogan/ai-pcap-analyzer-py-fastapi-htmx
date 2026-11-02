@@ -5,6 +5,7 @@
 <body class="report"><main class="page">
 <h1>{{ m.filename }}</h1>
 <p class="muted">{{ _("{packets} packets, {connections} connections and {requests} HTTP requests. Captured {when}. Secrets are masked.", packets=m.packets, connections=m.connections, requests=m.transactions, when=m.capture_start | when) }}</p>
+{% if notes.case or notes.tags or notes.note %}<section class="panel"><h2>{{ _("Case and notes") }}</h2><dl class="facts">{% if notes.case %}<div><dt>{{ _("Case number") }}</dt><dd>{{ notes.case }}</dd></div>{% endif %}{% if notes.tags %}<div><dt>{{ _("Tags") }}</dt><dd>{{ notes.tags }}</dd></div>{% endif %}</dl>{% if notes.note %}<p>{{ notes.note }}</p>{% endif %}</section>{% endif %}
 {{ ui.quality(quality) }}
 {% for w in m.warnings %}<p class="warn">{{ warning_text()[w] }}</p>{% endfor %}
 {% if budget %}<section class="panel"><h2>{{ _("Where the time went") }}</h2><div class="budget">{{ ui.strip(budget) }}</div>{{ ui.breakdown(budget) }}</section>{% endif %}

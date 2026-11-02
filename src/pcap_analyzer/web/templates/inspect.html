@@ -28,6 +28,7 @@
   <datalist id="dsts">{% for s in pairs | map(attribute="server_ip") | unique %}<option>{{ s }}</option>{% endfor %}</datalist>
   <button class="primary">{{ _("Inspect") }}</button>
 </form>
+<p class="chart-actions"><a href="/export/{{ a.id }}/requests.har?{{ query }}">{{ _("Download these requests (HAR)") }}</a></p>
 <div class="filter-row">
   {% if filters %}
   <ul class="saved">

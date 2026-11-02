@@ -18,7 +18,13 @@ Upload a PCAP and see where the time went: connection setup, network delay, serv
 - Ready capture commands for Linux servers, pods and worker nodes, including VXLAN, Geneve and `tcpdump -i any`
 - Turkish, English, German and Spanish
 - HTTPS decryption with a TLS key log file or RSA key
-- Export to CSV, Excel, JSON, PNG, SVG, HTML and PCAP
+- Export to CSV, Excel, JSON, PNG, SVG, HTML, HAR and PCAP
+- TLS view without a key: versions, ciphers, failed handshakes and certificate end dates
+- WebSocket and gRPC handling, gzip captures and captures in several parts
+- Limits per URL, a baseline capture, trends across captures, case notes and an activity log
+- REST API with tokens ([docs/api.md](docs/api.md)), and `pcap-analyzer check` for CI
+
+See the [usage guide](docs/usage.md).
 
 > **Status: early release.** Tested with synthetic captures on tshark 4.4 and 4.6, with real Linux traffic in a network namespace lab (`tools/lab.py`), and in a Kubernetes pod behind an NGINX Ingress. Compose, systemd and the Linux folder are installed and walked through from start to finish by `tools/check_install.sh`. It has not yet been tested with captures from a production network.
 

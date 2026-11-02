@@ -15,6 +15,7 @@
         <summary>{{ _("Download") }}</summary>
         <div class="menu-body">
           <a href="/export/{{ a.id }}/report.html">{{ _("Full report (HTML)") }}</a>
+          <a href="/export/{{ a.id }}/requests.har">{{ _("Requests (HAR)") }}</a>
           <table>
             {% for n, l in [("requests", _("Requests")), ("urls", _("URLs")), ("connections", _("Connections")), ("hosts", _("Hosts")), ("issues", _("Issues"))] %}
             <tr><td>{{ l }}</td><td><a href="/export/{{ a.id }}/{{ n }}.csv" aria-label="{{ l }} CSV">CSV</a></td><td><a href="/export/{{ a.id }}/{{ n }}.xlsx" aria-label="{{ l }} Excel">Excel</a></td><td><a href="/export/{{ a.id }}/{{ n }}.json" aria-label="{{ l }} JSON">JSON</a></td></tr>
@@ -22,6 +23,7 @@
           </table>
         </div>
       </details>
+      {% if baseline == a.id %}<span class="status s2">{{ _("Baseline") }}</span>{% else %}<form method="post" action="/a/{{ a.id }}/baseline"><input type="hidden" name="csrf_token" value="{{ form_token() }}"><button>{{ _("Set as baseline") }}</button></form>{% endif %}
       <a class="button primary" href="/a/{{ a.id }}/inspect">{{ _("Inspect traffic") }}</a>
     </div>
   </div>

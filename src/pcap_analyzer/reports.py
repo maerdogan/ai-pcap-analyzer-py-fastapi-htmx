@@ -1,7 +1,10 @@
 """Read-only reports over one analysis. The CLI and the web interface share these."""
+import fnmatch
 import math
 import statistics
 from dataclasses import dataclass
+
+import duckdb
 
 from . import causes, knowledge
 
@@ -21,6 +24,7 @@ BACKEND_SLOW_RATIO = 2.0
 BACKEND_ERROR_GAP = 0.2
 LOST_SHARE_HIGH = 0.01
 MOST = 0.5
+DRIFT_RATIO = 1.5
 
 
 def rows(db, sql, params=()):
@@ -298,6 +302,9 @@ ISSUES = [
     ("truncated", 1, "t.truncated", None),
     ("gateway", 1, "t.status IN (502, 503, 504)", None),
     ("server_errors", 1, "t.status >= 500 AND t.status NOT IN (502, 503, 504)", None),
+    ("grpc_errors", 1, "t.grpc_status > 0", None),
+    ("tls_no_answer", 1, None, "c.tls_no_answer"),
+    ("tls_alerts", 2, None, "c.tls_alert IS NOT NULL"),
     ("slow_service", 2, "t.cause = 'service'", None),
     ("loss", 2, "t.cause = 'loss'", None),
     ("retrans", 2, None, "c.retransmissions > 0"),
@@ -327,7 +334,10 @@ def issues(db, meta):
     found = []
     for key, severity, tsql, csql in ISSUES:
         table, cond = ("http_transactions t", tsql) if tsql else ("tcp_connections c", csql)
-        n = db.execute(f"SELECT count(*) FROM {table} WHERE {cond}").fetchone()[0]
+        try:
+            n = db.execute(f"SELECT count(*) FROM {table} WHERE {cond}").fetchone()[0]
+        except duckdb.BinderException:  # saved by an older version, which did not record this
+            continue
         if n:
             found.append(dict(knowledge.issue(key), count=n, severity=severity, drill=True))
     counts = dict(slow_dns=db.execute("SELECT count(*) FROM dns_queries WHERE duration > 0.1").fetchone()[0],
@@ -361,3 +371,89 @@ def time_budget(db):
     """Total seconds spent in each phase, across all requests."""
     t = one(db, f"""SELECT {', '.join(f'sum({p}) AS {p}' for p in causes.PHASES)} FROM http_transactions""")
     return [knowledge.phase(k, v) for k, v in t.items() if v]
+
+
+def waterfall(db, stream):
+    """Requests of one connection on one time axis, each split into its phases."""
+    conn = one(db, "SELECT start_time FROM tcp_connections WHERE stream = ?", [stream])
+    if conn is None:
+        return None
+    labels = {p: knowledge.phase(p, 0)["label"] for p in causes.PHASES}
+    got = rows(db, "SELECT * FROM http_transactions WHERE stream = ? ORDER BY req_start", [stream])
+    return dict(phases=labels, rows=[dict(id=t["id"], label=f"{t['method']} {(t['uri'] or '')[:48]}", status=t["status"], start=t["req_start"] - conn["start_time"],
+                                          **{p: t.get(p) or 0.0 for p in causes.PHASES}) for t in got])
+
+
+def target_misses(db, targets):
+    """URL shapes whose 95th percentile is over the target set for them."""
+    missed = []
+    for g in url_groups(db):
+        target = next((t for t in targets if fnmatch.fnmatch(g["url"], t["pattern"])), None)
+        if target and g["p95_total"] is not None and g["p95_total"] > target["seconds"]:
+            missed.append(dict(g, target=target["seconds"], over=sum(1 for r in db.execute(
+                "SELECT total FROM http_transactions WHERE url_template = ? AND total > ?", [g["url"], target["seconds"]]).fetchall())))
+    return missed
+
+
+def drift(db, base):
+    """URL shapes that got clearly slower or started failing since the reference analysis."""
+    before = {(u["method"], u["url"]): u for u in url_groups(base)}
+    found = []
+    for u in url_groups(db):
+        b = before.get((u["method"], u["url"]))
+        if b is None:
+            found.append(dict(u, why="new", base_p95=None, base_failed=None))
+        elif u["failed"] > b["failed"] and u["failed"] / u["requests"] > b["failed"] / b["requests"]:
+            found.append(dict(u, why="failing", base_p95=b["p95_total"], base_failed=b["failed"]))
+        elif None not in (u["p95_total"], b["p95_total"]) and u["p95_total"] > DRIFT_RATIO * b["p95_total"] and u["p95_total"] - b["p95_total"] >= causes.SLOW_S:
+            found.append(dict(u, why="slower", base_p95=b["p95_total"], base_failed=b["failed"]))
+    return found
+
+
+def trend(analyses, url):
+    """One URL shape across saved analyses, oldest first."""
+    out = []
+    for a in sorted(analyses, key=lambda x: x.meta.get("capture_start") or x.meta["created"]):
+        with a.connect() as db:
+            got = one(db, f"SELECT {TIME_STATS} FROM http_transactions WHERE url_template = ?", [url])
+        if got["requests"]:
+            out.append(dict(got, id=a.id, filename=a.meta["filename"], when=a.meta.get("capture_start") or a.meta["created"]))
+    return out
+
+
+def url_names(analyses, limit=200):
+    names = set()
+    for a in analyses:
+        with a.connect() as db:
+            names |= {r[0] for r in db.execute("SELECT DISTINCT url_template FROM http_transactions WHERE url_template IS NOT NULL").fetchall()}
+    return sorted(names)[:limit]
+
+
+def check(db, p95=None, error_rate=None, slowest_s=None):
+    """Compare an analysis with limits. Returns the numbers and the limits it broke."""
+    s = one(db, f"SELECT {TIME_STATS} FROM http_transactions")
+    rate = s["failed"] / s["requests"] * 100 if s["requests"] else 0.0
+    broken = []
+    if p95 is not None and (s["p95_total"] or 0) > p95:
+        broken.append(dict(limit="p95", value=s["p95_total"], allowed=p95))
+    if slowest_s is not None and (s["max_total"] or 0) > slowest_s:
+        broken.append(dict(limit="slowest", value=s["max_total"], allowed=slowest_s))
+    if error_rate is not None and rate > error_rate:
+        broken.append(dict(limit="error_rate", value=rate, allowed=error_rate))
+    return dict(requests=s["requests"], failed=s["failed"], error_rate=rate, p95=s["p95_total"], slowest=s["max_total"], broken=broken)
+
+
+def tls_health(db):
+    """What the handshakes show. None of this needs a key, so it also works on traffic that stays encrypted."""
+    try:
+        db.execute("SELECT tls_cipher, tls_alert, tls_no_answer FROM tcp_connections LIMIT 0")
+    except duckdb.BinderException:
+        return None
+    where = "WHERE tls_version IS NOT NULL OR tls_no_answer OR tls_alert IS NOT NULL"
+    return dict(
+        versions=rows(db, f"""SELECT coalesce(tls_version, '-') AS version, coalesce(tls_cipher, '-') AS cipher, coalesce(tls_alpn, '-') AS alpn, count(*) AS connections,
+            count(*) FILTER (tls_resumed) AS resumed, avg(tls_time) AS avg_handshake FROM tcp_connections {where} GROUP BY 1, 2, 3 ORDER BY connections DESC"""),
+        problems=rows(db, """SELECT stream, client_ip, client_port, server_ip, server_port, sni, tls_alert, tls_no_answer FROM tcp_connections
+            WHERE tls_no_answer OR tls_alert IS NOT NULL ORDER BY stream LIMIT 200"""),
+        certificates=rows(db, """SELECT coalesce(sni, server_ip) AS name, tls_cert_expires AS expires, count(*) AS connections FROM tcp_connections
+            WHERE tls_cert_expires IS NOT NULL GROUP BY 1, 2 ORDER BY 2"""))

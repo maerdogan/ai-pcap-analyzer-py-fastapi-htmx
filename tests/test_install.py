@@ -110,3 +110,19 @@ def test_network_policy_covers_the_app_and_is_applied():
     labels = (ROOT / "kubernetes/base/deployment.yaml").read_text()
     assert "app: pcap-analyzer" in text and "app: pcap-analyzer" in labels
     assert "policyTypes: [Ingress, Egress]" in text and "egress:" not in text
+
+
+def test_image_is_pinned():
+    text = (ROOT / "docker/Containerfile").read_text()
+    assert re.search(r"^FROM python:[\d.]+-slim@sha256:[0-9a-f]{64}$", text, re.M) and "-c requirements.lock" in text
+    assert all("==" in x for x in (ROOT / "requirements.lock").read_text().splitlines() if x and not x.startswith("#"))
+
+
+def test_issue_templates_warn_about_captures():
+    for name in ("bug.yml", "feature.yml"):
+        assert "Do not attach" in (ROOT / ".github/ISSUE_TEMPLATE" / name).read_text()
+
+
+def test_collect_script_parses():
+    subprocess.run(["bash", "-n", ROOT / "tools/pcap-collect.sh"], check=True)
+    assert subprocess.run([ROOT / "tools/pcap-collect.sh"], capture_output=True).returncode == 2

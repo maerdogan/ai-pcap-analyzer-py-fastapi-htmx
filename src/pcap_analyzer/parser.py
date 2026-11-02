@@ -1,5 +1,6 @@
 """Turn tshark packets into connections, HTTP transactions and TCP events."""
 import math
+import os
 import re
 from collections import deque
 from dataclasses import dataclass, field
@@ -9,6 +10,18 @@ from .tshark import AGG, EVENTS
 
 SYN, ACK, FIN, RST = 0x02, 0x10, 0x01, 0x04
 TLS_ALERT = 21
+SWITCHING_PROTOCOLS = 101
+CIPHERS = {
+    0x1301: "TLS_AES_128_GCM_SHA256", 0x1302: "TLS_AES_256_GCM_SHA384", 0x1303: "TLS_CHACHA20_POLY1305_SHA256",
+    0xC02B: "ECDHE_ECDSA_AES_128_GCM_SHA256", 0xC02C: "ECDHE_ECDSA_AES_256_GCM_SHA384", 0xC02F: "ECDHE_RSA_AES_128_GCM_SHA256",
+    0xC030: "ECDHE_RSA_AES_256_GCM_SHA384", 0xCCA8: "ECDHE_RSA_CHACHA20_POLY1305", 0xCCA9: "ECDHE_ECDSA_CHACHA20_POLY1305",
+    0x009C: "RSA_AES_128_GCM_SHA256", 0x009D: "RSA_AES_256_GCM_SHA384", 0x002F: "RSA_AES_128_CBC_SHA", 0x0035: "RSA_AES_256_CBC_SHA",
+    0x000A: "RSA_3DES_EDE_CBC_SHA", 0x0005: "RSA_RC4_128_SHA",
+}
+ALERTS = {0: "close_notify", 10: "unexpected_message", 20: "bad_record_mac", 40: "handshake_failure", 42: "bad_certificate", 43: "unsupported_certificate",
+          44: "certificate_revoked", 45: "certificate_expired", 46: "certificate_unknown", 47: "illegal_parameter", 48: "unknown_ca", 49: "access_denied",
+          50: "decode_error", 51: "decrypt_error", 70: "protocol_version", 71: "insufficient_security", 80: "internal_error", 90: "user_canceled",
+          109: "missing_extension", 112: "unrecognized_name", 116: "certificate_required", 120: "no_application_protocol"}
 RTT_INDISTINCT = 0.0005  # below this, timestamps cannot tell near from far
 BODY_PREVIEW = 2000
 DELAYED_ACK_MIN, DELAYED_ACK_MAX = 0.03, 0.5
@@ -17,6 +30,7 @@ SAME_ID_S = 0.2  # tcpdump -i any sees a packet on each interface it crosses, an
 NO_ID_S = 0.002  # without an IP ID, IPv6 and some stacks, only a very short gap shows a copy
 NO_BODY_METHODS = ("HEAD", "CONNECT")
 NO_BODY_STATUS = (204, 304)
+TRACEPARENT = re.compile(r"[0-9a-f]{2}-([0-9a-f]{32})-[0-9a-f]{16}-[0-9a-f]{2}")
 
 
 def many(p, key):
@@ -60,6 +74,15 @@ def header(block, name):
         if line.lower().startswith(prefix):
             return clean_line(line[len(prefix):])
     return None
+
+
+def request_id(get):
+    """The ID that follows a request through proxies. A W3C trace ID stays the same when a proxy starts a new span."""
+    named = get(os.environ.get("PCAP_ANALYZER_REQUEST_ID_HEADER", "x-request-id").lower())
+    if named:
+        return named
+    m = TRACEPARENT.fullmatch((get("traceparent") or "").strip().lower())
+    return m[1] if m else None
 
 
 def masked_headers(pairs):
@@ -121,6 +144,13 @@ class Stream:
     tls_seen: bool = False
     tls_start: Packet | None = None
     tls_end: Packet | None = None
+    tls_cipher: str | None = None
+    tls_alpn: str | None = None
+    tls_alert: str | None = None
+    tls_hello: bool = False
+    tls_server_hello: bool = False
+    tls_certificate: bool = False
+    tls_cert_expires: str | None = None
     pending_rtt: list = field(default_factory=list)
     rst_code: int = None
     wscale: int | None = None
@@ -234,6 +264,19 @@ class Builder:
                 v[-1] if v else "0x0303", "unknown")
         if 20 in hs and s.client == src:
             s.tls_end = pk
+        s.tls_hello = s.tls_hello or 1 in hs
+        s.tls_certificate = s.tls_certificate or 11 in hs
+        if 2 in hs:
+            s.tls_server_hello = True
+            code = to_int(last(p, "tls.handshake.ciphersuite"))
+            s.tls_cipher = CIPHERS.get(code, f"0x{code:04X}") if code is not None else None
+            s.tls_alpn = first(p, "tls.handshake.extensions_alpn_str")
+        alert = to_int(first(p, "tls.alert_message.desc"))
+        if alert not in (None, 0) and s.tls_alert is None:
+            s.tls_alert = ALERTS.get(alert, str(alert))
+        times = many(p, "x509af.utcTime")
+        if len(times) >= 2 and s.tls_cert_expires is None:  # the first certificate is the server's, with its start and end
+            s.tls_cert_expires = times[1]
 
     def _http1(self, p, s, pk, src, dst):
         segs = sorted({int(x) for k in ("tcp.segment", "tls.segment") for x in many(p, k)})
@@ -248,7 +291,7 @@ class Builder:
                     frame=pk.frame, start_frame=min(segs + [pk.frame]), method=m,
                     uri=uris[i] if i < len(uris) else None, host=hosts[i] if i < len(hosts) else None,
                     version=versions[i] if i < len(versions) else "HTTP/1.1",
-                    xff=first(p, "http.x_forwarded_for"), request_id=header(lines, "x-request-id"),
+                    xff=first(p, "http.x_forwarded_for"), request_id=request_id(lambda name: header(lines, name)),
                     content_length=to_int(first(p, "http.content_length")), headers=masked_headers(line_pairs(lines)),
                     body=preview(bodies[0]) if bodies else None))
         codes = many(p, "http.response.code")
@@ -269,6 +312,7 @@ class Builder:
                     content_type=first(p, "http.content_type"), encoding=first(p, "http.content_encoding"),
                     transfer=first(p, "http.transfer_encoding"), server_timing=header(lines, "server-timing"),
                     response_time=header(lines, "x-response-time"), headers=masked_headers(line_pairs(lines)),
+                    websocket=(header(lines, "upgrade") or "").lower() == "websocket",
                     head_len=head_len, body=preview(bodies[0]) if bodies else None))
 
     def _http2(self, p, s, pk, src, dst):
@@ -295,7 +339,9 @@ class Builder:
                 s.client = s.client or src
             elif ":status" in hdrs:
                 s.client = s.client or dst
-            st = s.h2.setdefault(sid2, dict(req=None, resp=None, c_end=None, s_end=None, c_data=0, s_data=0, last_s=None))
+            st = s.h2.setdefault(sid2, dict(req=None, resp=None, c_end=None, s_end=None, c_data=0, s_data=0, last_s=None, grpc=None, grpc_message=None))
+            if "grpc-status" in hdrs:  # sent in the trailers, after the response headers
+                st["grpc"], st["grpc_message"] = to_int(hdrs["grpc-status"]), hdrs.get("grpc-message")
             is_client = src == s.client
             if ":method" in hdrs:
                 st["req"] = dict(hdrs, frame=pk.frame, t=pk.t)
@@ -326,7 +372,7 @@ def capture_point(rtt_srv, rtt_cli):
     return "middle"
 
 
-def finish_stream(s):
+def finish_stream(s, slow_s=causes.SLOW_S):
     """Return (connection row, transaction rows) for one stream."""
     client = s.client or min(s.a, s.b, key=lambda e: -e[1])
     server = s.b if client == s.a else s.a
@@ -346,8 +392,11 @@ def finish_stream(s):
         x["connect_time"] = connect if x["new_conn"] else None
         x["tls_time"] = tls_time if x["new_conn"] else None
     kind = "HTTP/2" if s.h2 else "HTTP" if s.requests or s.responses else "TCP"
+    websocket = any(r.get("websocket") and r["status"] == SWITCHING_PROTOCOLS for r in s.responses)
     if s.tls_seen:
         kind = "HTTPS/2" if s.h2 else "HTTPS" if txns else "TLS"
+    if websocket:
+        kind = "WebSocket"
     pay_c = sum(p.payload for p in s.packets if p.src == client)
     pay_s = sum(p.payload for p in s.packets if p.src != client)
     conn = dict(
@@ -362,8 +411,10 @@ def finish_stream(s):
         closed_by=None if not closer else "client" if closer.src == client else "server", rst_code=s.rst_code or None,
         transactions=len(txns), sack=s.sack, wscale=s.wscale, min_window=min((p.win for p in s.packets if not p.flags & SYN), default=None),
         retransmissions=sum(1 for p in s.packets if p.retrans), zero_windows=len(s.zero_windows),
-        byte_ratio_db=_ratio_db(pay_c, pay_s), offload=s.offload, one_way=len({p.src for p in s.packets}) == 1)
-    _enrich(s, client, txns, conn)
+        byte_ratio_db=_ratio_db(pay_c, pay_s), offload=s.offload, one_way=len({p.src for p in s.packets}) == 1,
+        tls_cipher=s.tls_cipher, tls_alpn=s.tls_alpn, tls_alert=s.tls_alert, tls_no_answer=s.tls_hello and not s.tls_server_hello,
+        tls_resumed=s.tls_server_hello and not s.tls_certificate if s.tls_version != "TLS 1.3" else None, tls_cert_expires=s.tls_cert_expires)
+    _enrich(s, client, txns, conn, slow_s)
     return conn, txns
 
 
@@ -411,7 +462,7 @@ def _delayed_ack(s, sender, lo, hi):
     return total
 
 
-def _enrich(s, client, txns, conn):
+def _enrich(s, client, txns, conn, slow_s):
     server = next((e for e in (s.a, s.b) if e != client), None)
     for i, t in enumerate(txns):
         lo = t["req_frame"]
@@ -440,7 +491,7 @@ def _enrich(s, client, txns, conn):
         t["truncated"] = bool(t["answered"] and clen and t["body_expected"] and t["body_bytes"] is not None
                               and t["body_bytes"] < clen and not conn["kind"].startswith("HTTPS"))
         t["server_reported"] = causes.parse_server_timing(t["server_timing"])
-        t["cause"], t["cause_share"], flags = causes.classify(t, conn)
+        t["cause"], t["cause_share"], flags = causes.classify(t, conn, slow_s)
         t["flags"] = ",".join(flags)
 
 
@@ -452,7 +503,7 @@ def _h1_transactions(s, client, rtt_srv):
     if not s.requests and not s.responses:
         return []
     frames = {p.frame: p for p in s.packets}
-    finals = deque(r for r in s.responses if r["status"] >= 200)
+    finals = deque(r for r in s.responses if r["status"] >= 200 or r["status"] == SWITCHING_PROTOCOLS)
     pairs = [(q, finals.popleft() if finals else None) for q in s.requests]
     pairs += [(None, r) for r in finals]
     out = []
@@ -469,6 +520,8 @@ def _h1_transactions(s, client, rtt_srv):
         q_last = req_pk[-1] if req_pk else q_first
         r_first = frames.get(r_start) if r else None
         r_last = resp_pk[-1] if resp_pk else r_first
+        if r and r["status"] == SWITCHING_PROTOCOLS:  # what follows is not this response, so the connection's life does not count as slow
+            r_last = r_first
         out.append(_row(s, q["method"], q["uri"], q["host"], q["version"], r and r["status"], r and r["phrase"],
                         q_first, q_last, r_first, r_last, rtt_srv, sum(p.payload for p in req_pk if not p.retrans),
                         sum(p.payload for p in resp_pk if not p.retrans), q["content_length"], r and r["content_length"],
@@ -503,9 +556,9 @@ def _h2_transactions(s, client, rtt_srv):
                         q_first, q_last, r_first, r_last, rtt_srv, st["c_data"], st["s_data"],
                         to_int(q.get("content-length")), to_int((r or {}).get("content-length")),
                         (r or {}).get("content-type"), (r or {}).get("content-encoding"), None, (r or {}).get("server-timing"),
-                        q.get("x-forwarded-for"), q.get("x-request-id"), sid2))
+                        q.get("x-forwarded-for"), request_id(q.get), sid2))
         out[-1].update(req_headers=_h2_headers(q), resp_headers=_h2_headers(r) if r else None, req_body=None, resp_body=None,
-                       head_len=None, last_frame=r_last.frame if r_last else None,
+                       head_len=None, last_frame=r_last.frame if r_last else None, grpc_status=st["grpc"], grpc_message=st["grpc_message"],
                        body_expected=bool(r) and q.get(":method") not in NO_BODY_METHODS)
     return out
 

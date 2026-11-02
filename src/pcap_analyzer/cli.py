@@ -60,6 +60,11 @@ def main(argv=None):
     cp.add_argument("a")
     cp.add_argument("b")
     cp.add_argument("--two-point", action="store_true", help="match the same requests seen at two points, A nearer the client")
+    ck = sub.add_parser("check", help="exit with code 2 when an analysis breaks a limit, for CI")
+    ck.add_argument("id")
+    ck.add_argument("--p95", type=float, help="95th percentile limit in seconds")
+    ck.add_argument("--slowest", type=float, help="limit for the slowest request in seconds")
+    ck.add_argument("--error-rate", type=float, help="limit for failed requests in percent")
     sv = sub.add_parser("serve", help="start the web interface")
     sv.add_argument("--host", default="127.0.0.1")
     sv.add_argument("--port", type=int, default=8000)
@@ -94,6 +99,12 @@ def main(argv=None):
             with a.connect() as da, b.connect() as db:
                 out = compare.two_point(da, db) if args.two_point else compare.captures(da, db, reports.Inspect(), reports.Inspect())
             print(json.dumps(out, indent=2, default=str))
+        elif args.cmd == "check":
+            a = engine.open_analysis(args.id, settings)
+            with a.connect() as db:
+                out = reports.check(db, args.p95, args.error_rate, args.slowest)
+            print(json.dumps(out, indent=2))
+            return 2 if out["broken"] else 0
         elif args.cmd in ("report", "connection", "inspect"):
             a = engine.open_analysis(args.id, settings)
             with a.connect() as db:

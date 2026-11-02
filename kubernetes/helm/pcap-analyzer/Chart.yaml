@@ -1,0 +1,6 @@
+apiVersion: v2
+name: pcap-analyzer
+description: Find out why HTTP requests are slow, from a packet capture.
+type: application
+version: 0.3.0
+appVersion: "0.3.0"

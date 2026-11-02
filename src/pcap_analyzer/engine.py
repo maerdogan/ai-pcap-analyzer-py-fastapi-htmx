@@ -1,4 +1,5 @@
 """Analyze a capture once and keep the result; the same input reopens the saved result."""
+import gzip
 import hashlib
 import json
 import re
@@ -9,13 +10,15 @@ from collections import Counter
 from dataclasses import astuple, dataclass
 from pathlib import Path
 
-from . import __version__, knowledge, store, tshark
+from . import __version__, knowledge, records, store, tshark
 from .config import Settings
 from .parser import Builder, finish_stream
 
 
 DNS_WINDOW_S = 5.0
-COMPRESSED_MAGIC = (b"\x1f\x8b", b"\x28\xb5\x2f\xfd", b"\x04\x22\x4d\x18")  # gzip, zstd, lz4
+GZIP_MAGIC = b"\x1f\x8b"
+COMPRESSED_MAGIC = (b"\x28\xb5\x2f\xfd", b"\x04\x22\x4d\x18")  # zstd, lz4
+CHUNK = 1 << 20
 STALE_TMP_S = 6 * 3600
 TMP_PREFIXES = ("pcap-analyzer-", "pcap-upload-", "pcap-export-")
 
@@ -55,7 +58,40 @@ def _refuse_compressed(path):
         raise CompressedCapture(knowledge.t("Compressed captures are not accepted, because their real size cannot be checked. Decompress the file and upload it again."))
 
 
-def _digest(paths, flt):
+def unpack(path, folder, settings):
+    """Unpack a gzip capture and stop at the size limit, because the real size is unknown until then."""
+    with open(path, "rb") as f:
+        if f.read(2) != GZIP_MAGIC:
+            return Path(path)
+    limit, written = settings.max_size_mb * CHUNK, 0
+    fd, name = tempfile.mkstemp(prefix="unpacked-", dir=folder)
+    try:
+        with gzip.open(path, "rb") as src, open(fd, "wb") as dst:
+            while chunk := src.read(CHUNK):
+                written += len(chunk)
+                if written > limit:
+                    raise CaptureTooLarge(knowledge.t("{name} is larger than the {n} MB limit", name=Path(path).name, n=settings.max_size_mb))
+                dst.write(chunk)
+    except (OSError, EOFError) as e:
+        raise CompressedCapture(knowledge.t("This gzip file is damaged: {reason}", reason=e)) from e
+    return Path(name)
+
+
+def join_parts(paths, folder, settings):
+    """Turn several parts into one capture, unpacking each first and holding the size limit on the result."""
+    parts = [unpack(p, folder, settings) for p in paths]
+    for p in parts:
+        _refuse_compressed(p)
+    if sum(p.stat().st_size for p in parts) > settings.max_size_mb * CHUNK:
+        raise CaptureTooLarge(knowledge.t("{name} is larger than the {n} MB limit", name=Path(paths[0]).name, n=settings.max_size_mb))
+    if len(parts) == 1:
+        return parts[0]
+    out = Path(folder) / "merged.pcapng"
+    tshark.merge(parts, out, settings.mergecap)
+    return out
+
+
+def _digest(paths, flt, slow_s):
     h = hashlib.sha256()
     h.update(__version__.encode())
     for p in paths:
@@ -64,7 +100,7 @@ def _digest(paths, flt):
             with open(p, "rb") as f:
                 while chunk := f.read(1 << 20):
                     h.update(chunk)
-    h.update(repr(astuple(flt)).encode())
+    h.update(repr((astuple(flt), slow_s)).encode())
     return h.hexdigest()[:20]
 
 
@@ -128,11 +164,18 @@ def analyze(path, keylog=None, rsa_key=None, flt=None, settings=None, use_cached
 def _analyze(path, keylog, rsa_key, flt, settings, use_cached, display_name, limit):
     flt = flt or tshark.Filter()
     path = Path(path)
-    if path.stat().st_size > settings.max_size_mb * 1024 * 1024:
+    if path.stat().st_size > settings.max_size_mb * CHUNK:
         raise CaptureTooLarge(knowledge.t("{name} is larger than the {n} MB limit", name=path.name, n=settings.max_size_mb))
-    _refuse_compressed(path)
+    with tempfile.TemporaryDirectory(prefix="pcap-analyzer-", dir="/tmp") as folder:
+        capture = join_parts([path], folder, settings)
+        display_name = display_name or path.name.removesuffix(".gz")
+        return _run(capture, keylog, rsa_key, flt, settings, use_cached, display_name, limit)
+
+
+def _run(path, keylog, rsa_key, flt, settings, use_cached, display_name, limit):
     ts_version = tshark.version(settings.tshark)
-    aid = _digest([path, keylog, rsa_key], flt)
+    slow_s = records.slow_s(settings)
+    aid = _digest([path, keylog, rsa_key], flt, slow_s)
     out = settings.workdir / aid
     if use_cached and (out / "meta.json").exists():
         return Analysis(aid, out, json.loads((out / "meta.json").read_text()), True)
@@ -140,12 +183,12 @@ def _analyze(path, keylog, rsa_key, flt, settings, use_cached, display_name, lim
     started = time.monotonic()
     warnings = []
     b = Builder()
-    for p in tshark.packets(path, keylog, rsa_key, flt, settings.tshark, warnings, limit):
+    for p in tshark.packets(path, keylog, rsa_key, flt, settings.tshark, warnings, limit, settings.workdir, settings.analysis_timeout_s):
         b.add(p)
     conns, txns = [], []
     for s in b.streams.values():
         limit.check()
-        c, t = finish_stream(s)
+        c, t = finish_stream(s, slow_s)
         conns.append(c)
         txns += t
     txns.sort(key=lambda x: x["req_start"])
@@ -155,19 +198,19 @@ def _analyze(path, keylog, rsa_key, flt, settings, use_cached, display_name, lim
     settings.workdir.mkdir(parents=True, exist_ok=True)
     tmp = Path(tempfile.mkdtemp(prefix=".tmp-", dir=settings.workdir))
     try:
-        return _save(tmp, out, aid, path, keylog, rsa_key, flt, settings, display_name, ts_version, started, warnings, b, conns, txns, limit)
+        return _save(tmp, out, aid, path, keylog, rsa_key, flt, settings, display_name, ts_version, started, warnings, b, conns, txns, limit, slow_s)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
 
-def _save(tmp, out, aid, path, keylog, rsa_key, flt, settings, display_name, ts_version, started, warnings, b, conns, txns, limit):
+def _save(tmp, out, aid, path, keylog, rsa_key, flt, settings, display_name, ts_version, started, warnings, b, conns, txns, limit, slow_s):
     store.write(tmp / "analysis.duckdb", conns, txns, b.events, b.dns_rows)
     limit.check()
     meta = dict(
         id=aid, filename=display_name or path.name, size=path.stat().st_size, created=time.time(), tshark=ts_version, version=__version__,
         decryption="keylog" if keylog else "rsa_key" if rsa_key else None, filter=flt.expression(),
         packets=b.total, tcp_packets=b.tcp, bytes=b.bytes, connections=len(conns), transactions=len(txns),
-        ip_fragments=b.fragments, frag_needed=b.frag_needed, copies=b.copies, tunnelled=b.tunnelled, capture_start=b.t_first, capture_end=b.t_last, duration_s=round(time.monotonic() - started, 3),
+        ip_fragments=b.fragments, frag_needed=b.frag_needed, copies=b.copies, tunnelled=b.tunnelled, capture_start=b.t_first, capture_end=b.t_last, duration_s=round(time.monotonic() - started, 3), slow_s=slow_s,
         quality=_quality(b, conns), warnings=_warnings(b, conns, bool(keylog or rsa_key), warnings))
     if settings.keep_capture:
         shutil.copyfile(path, tmp / "capture")
@@ -226,6 +269,7 @@ def purge(settings=None, now=None, tmp_root=Path("/tmp")):
     old = [m["id"] for m in list_analyses(settings) if now - m["created"] > settings.ttl_days * 86400]
     for aid in old:
         delete(aid, settings)
+    records.trim_audit(settings)
     cutoff = now - STALE_TMP_S
     if settings.workdir.exists():
         _remove_stale(settings.workdir.glob(".tmp-*"), cutoff)

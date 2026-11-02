@@ -28,6 +28,7 @@
   <dl class="facts">
     <div><dt>{{ _("Status") }}</dt><dd>{{ t.status or _("No reply") }}{% if t.phrase %} {{ t.phrase }}{% endif %}</dd></div>
     <div><dt>{{ _("Protocol") }}</dt><dd>{{ t.http_version }}</dd></div>
+    {% if t.grpc_status is defined and t.grpc_status is not none %}<div><dt>{{ _("gRPC status") }}</dt><dd>{{ t.grpc_status }}{% if t.grpc_message %} {{ t.grpc_message }}{% endif %}</dd></div>{% endif %}
     <div><dt>{{ _("Total") }}</dt><dd>{{ t.total | seconds }}</dd></div>
     <div><dt>{{ _("First byte") }}</dt><dd>{{ t.ttfb | seconds }}</dd></div>
     <div><dt>{{ _("Server wait") }}</dt><dd>{{ t.wait | seconds }}</dd></div>

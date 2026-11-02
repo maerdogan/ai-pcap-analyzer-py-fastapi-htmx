@@ -1,0 +1,31 @@
+name: Bug
+description: Something gives a wrong result or fails.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: "**Do not attach captures, key logs or private keys.** They can hold passwords and customer data. Describe the traffic, or attach a small sample you made."
+  - type: input
+    id: version
+    attributes:
+      label: Version and install type
+      placeholder: 0.3.0, Kubernetes
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: What happened
+      description: Include the message on screen and the numbers. Remove addresses you cannot share.
+    validations:
+      required: true
+  - type: textarea
+    id: wireshark
+    attributes:
+      label: What Wireshark or tshark shows for the same traffic

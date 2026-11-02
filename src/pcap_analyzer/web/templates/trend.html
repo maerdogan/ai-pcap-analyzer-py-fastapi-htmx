@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block title %}{{ _("Trend") }}{% endblock %}
+{% block main %}
+<header class="page-head"><div><h1>{{ _("Trend") }}</h1><p class="muted">{{ _("Follow one URL across your saved analyses.") }}</p></div></header>
+<section class="panel">
+  <form method="get" action="/trend" class="inline">
+    <label>URL <input id="url" name="url" list="urls" value="{{ url }}" placeholder="/api/orders/{id}"></label>
+    <datalist id="urls">{% for n in names %}<option>{{ n }}</option>{% endfor %}</datalist>
+    <button class="primary">{{ _("Show trend") }}</button>
+  </form>
+</section>
+{% if rows %}
+<section class="panel flush"><div class="table-wrap"><table>
+  <thead><tr><th>{{ _("Captured") }}</th><th>{{ _("File") }}</th><th class="num">{{ _("Requests") }}</th><th class="num">{{ _("Failed") }}</th><th class="num">{{ _("Median") }}</th><th class="num">{{ _("95th percentile") }}</th></tr></thead>
+  <tbody>{% for r in rows %}<tr><td>{{ r.when | when }}</td><td><a href="/a/{{ r.id }}">{{ r.filename }}</a></td><td class="num">{{ r.requests }}</td><td class="num">{{ r.failed }}</td><td class="num">{{ r.p50_total | seconds }}</td><td class="num">{{ r.p95_total | seconds }}</td></tr>{% endfor %}</tbody>
+</table></div></section>
+{% elif url %}<p class="empty">{{ _("No saved analysis has this URL.") }}</p>{% endif %}
+{% endblock %}

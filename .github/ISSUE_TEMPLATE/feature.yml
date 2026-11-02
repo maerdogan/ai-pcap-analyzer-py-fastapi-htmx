@@ -1,0 +1,17 @@
+name: Feature
+description: Something the application should do.
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: "**Do not attach captures, key logs or private keys.**"
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem you want to solve
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: How you imagine it

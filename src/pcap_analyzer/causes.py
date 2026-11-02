@@ -11,7 +11,7 @@ CAUSE_OF_PHASE = {
     "queue_time": "queueing", "service": "service", "transfer_clean": "transfer", "retrans_time": "loss",
     "zero_window_time": "slow_client", "delayed_ack_time": "delayed_ack",
 }
-CAUSES = sorted(set(CAUSE_OF_PHASE.values()) | {"normal", "no_response", "connection_reset", "truncated", "gateway"})
+CAUSES = sorted(set(CAUSE_OF_PHASE.values()) | {"normal", "no_response", "connection_reset", "truncated", "gateway", "websocket"})
 ROUND_TIMEOUTS = (5, 10, 15, 30, 60, 90, 120, 180, 240, 300, 600, 900)  # seconds people set as limits
 SYN_RETRIES = (1, 3, 7, 15, 31)  # total wait when a 1 s timer doubles
 TEXT_TYPES = ("json", "text", "xml", "javascript")
@@ -34,7 +34,7 @@ def phases(t):
     return {p: _f(t.get(p)) for p in PHASES}
 
 
-def classify(t, conn):
+def classify(t, conn, slow_s=SLOW_S):
     """Return (cause, share of elapsed time, flags)."""
     flags = []
     if t.get("status") in (502, 503, 504):
@@ -53,6 +53,8 @@ def classify(t, conn):
     if not t.get("answered"):
         cause = "connection_reset" if conn.get("close_type") == "RST" else "no_response"
         return cause, 1.0, flags
+    if t.get("status") == 101:
+        return "websocket", 1.0, flags
     if t.get("truncated"):
         return "truncated", 1.0, flags
     if "gateway_error" in flags:
@@ -64,7 +66,7 @@ def classify(t, conn):
         ph["connect_time"] = 0.0
     top = max(PHASES, key=ph.get)
     share = ph[top] / total if total else 0.0
-    if ph[top] < SLOW_S:
+    if ph[top] < slow_s:
         return "normal", share, flags
     return CAUSE_OF_PHASE[top], share, flags
 

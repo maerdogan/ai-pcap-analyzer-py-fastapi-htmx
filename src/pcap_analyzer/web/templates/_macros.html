@@ -142,6 +142,7 @@
     <a href="/a/{{ a.id }}?tab=connections" {% if current == "connections" %}aria-current="page"{% endif %}>{{ _("Connections") }}</a>
     <a href="/a/{{ a.id }}?tab=hosts" {% if current == "hosts" %}aria-current="page"{% endif %}>{{ _("Hosts") }}</a>
     <a href="/a/{{ a.id }}?tab=backends" {% if current == "backends" %}aria-current="page"{% endif %}>{{ _("Servers") }}</a>
+    <a href="/a/{{ a.id }}?tab=tls" {% if current == "tls" %}aria-current="page"{% endif %}>TLS</a>
     <a href="/a/{{ a.id }}/inspect" {% if current == "inspect" %}aria-current="page"{% endif %}>{{ _("Inspect traffic") }}</a>
   </nav>
   <form class="search" method="get" action="/a/{{ a.id }}/inspect" role="search">

@@ -1,0 +1,29 @@
+{% if tls is none %}<p class="empty">{{ _("This analysis was saved by an older version. Analyze the capture again to see TLS details.") }}</p>
+{% elif tls.versions %}
+<section class="panel flush">
+  <h2>{{ _("Handshakes") }}</h2>
+  <div class="table-wrap"><table>
+    <thead><tr><th>{{ _("Version") }}</th><th>{{ _("Cipher") }}</th><th>ALPN</th><th class="num">{{ _("Connections") }}</th><th class="num">{{ _("Resumed") }}</th><th class="num">{{ _("Average handshake") }}</th></tr></thead>
+    <tbody>{% for v in tls.versions %}<tr><td>{{ v.version }}</td><td>{{ v.cipher }}</td><td>{{ v.alpn }}</td><td class="num">{{ v.connections }}</td><td class="num">{{ v.resumed }}</td><td class="num">{{ v.avg_handshake | seconds }}</td></tr>{% endfor %}</tbody>
+  </table></div>
+</section>
+{% if tls.problems %}
+<section class="panel flush">
+  <h2>{{ _("TLS problems") }}</h2>
+  <div class="table-wrap"><table>
+    <thead><tr><th>{{ _("Client") }}</th><th>{{ _("Server") }}</th><th>{{ _("Server name") }}</th><th>{{ _("Problem") }}</th></tr></thead>
+    <tbody>{% for p in tls.problems %}<tr><td><a href="/a/{{ a.id }}/conn/{{ p.stream }}">{{ p.client_ip }}:{{ p.client_port }}</a></td><td>{{ p.server_ip }}:{{ p.server_port }}</td><td>{{ p.sni or "–" }}</td><td>{% if p.tls_no_answer %}{{ _("No answer to ClientHello") }}{% else %}{{ p.tls_alert }}{% endif %}</td></tr>{% endfor %}</tbody>
+  </table></div>
+</section>
+{% endif %}
+{% if tls.certificates %}
+<section class="panel flush">
+  <h2>{{ _("Certificates seen") }}</h2>
+  <div class="table-wrap"><table>
+    <thead><tr><th>{{ _("Server name") }}</th><th>{{ _("Expires") }}</th><th class="num">{{ _("Connections") }}</th></tr></thead>
+    <tbody>{% for c in tls.certificates %}<tr><td>{{ c.name }}</td><td>{{ c.expires }}</td><td class="num">{{ c.connections }}</td></tr>{% endfor %}</tbody>
+  </table></div>
+  <p class="hint">{{ _("TLS 1.3 encrypts the certificate, so it is visible only with a key log.") }}</p>
+</section>
+{% endif %}
+{% else %}<p class="empty">{{ _("No TLS traffic was found in this capture.") }}</p>{% endif %}

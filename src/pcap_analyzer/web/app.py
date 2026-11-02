@@ -2,6 +2,7 @@
 import contextlib
 import datetime
 import ipaddress
+import json
 import logging
 import os
 import re
@@ -16,7 +17,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Resp
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from .. import __version__, capture_guide, compare, engine, exports, knowledge, reports, tshark
+from .. import __version__, capture_guide, compare, engine, exports, knowledge, records, reports, tshark
 from ..config import Settings
 from . import saved
 from .auth import Auth
@@ -30,13 +31,15 @@ FORM_OVERHEAD = 2 * CHUNK  # key files and form fields on top of the capture
 KEY_LIMIT = CHUNK
 PURGE_INTERVAL_S = 3600
 MAX_CAPTURE_S = 3600
-TAB_LABELS = {"overview": "Overview", "issues": "Issues", "urls": "URLs", "connections": "Connections", "hosts": "Hosts", "backends": "Servers"}
+TAB_LABELS = {"overview": "Overview", "issues": "Issues", "urls": "URLs", "connections": "Connections", "hosts": "Hosts", "backends": "Servers", "tls": "TLS"}
 LANGUAGE_NAMES = {"tr": "Türkçe", "en": "English", "de": "Deutsch", "es": "Español"}
 LANGUAGE_COOKIE = "pcap_language"
 LANGUAGE_DAYS = 365
 FORM_TOKEN_HEADER = "x-csrf-token"
 FORM_TOKEN_FIELD = "csrf_token"
 RECENT_CAPTURES = 12
+API_PREFIX = "/api/v1/"
+API_SECTIONS = ("overview", "urls", "connections", "hosts", "issues", "slowest")
 CSP = ("default-src 'self'; img-src 'self' data:; font-src 'self' data:; style-src 'self' 'unsafe-inline'; object-src 'none'; "
        "base-uri 'none'; frame-ancestors 'none'; form-action 'self'")
 
@@ -141,8 +144,8 @@ def create_app(settings=None, https=False):
 
     async def from_this_session(request: Request):
         """Plain forms send the token as a field, and htmx sends it as a header."""
-        if request.method in ("GET", "HEAD") or request.url.path.startswith(OPEN_PATHS):
-            return
+        if request.method in ("GET", "HEAD") or request.url.path.startswith(OPEN_PATHS + (API_PREFIX,)):
+            return  # API calls carry a token that a browser never adds by itself
         sent = request.headers.get(FORM_TOKEN_HEADER)
         if sent is None:
             sent = (await request.form()).get(FORM_TOKEN_FIELD)
@@ -161,6 +164,10 @@ def create_app(settings=None, https=False):
     app.mount("/static", StaticFiles(directory=HERE / "static"), name="static")
     templates = Jinja2Templates(directory=HERE / "templates")
     templates.env.filters.update(seconds=seconds, size=size, when=when, day=day, clock=clock)
+
+    def log(request, event, detail=""):
+        records.audit(settings, event, request.client.host if request.client else "unknown", detail)
+
     words = re.findall(r'\bt\("([^"]+)"\)', (HERE / "static/app.js").read_text())
     templates.env.globals.update(version=__version__, tab_labels=TAB_LABELS, _=knowledge.t, warning_text=knowledge.warnings, lang=knowledge.language,
                                  languages=lambda: [(code, LANGUAGE_NAMES[code]) for code in knowledge.LANGUAGES],
@@ -183,7 +190,7 @@ def create_app(settings=None, https=False):
     def capture_ctx(a):
         """What every capture page needs for its navigation."""
         with a.connect() as db:
-            return dict(a=a, m=a.meta, issue_count=sum(i["count"] for i in reports.issues(db, a.meta) if i["severity"] == 1))
+            return dict(a=a, m=a.meta, notes=records.notes(settings, a.id), issue_count=sum(i["count"] for i in reports.issues(db, a.meta) if i["severity"] == 1))
 
     def is_htmx(request):
         return request.headers.get("hx-request") == "true"
@@ -199,12 +206,17 @@ def create_app(settings=None, https=False):
         path = request.url.path
         if request.method not in ("GET", "HEAD") and request.headers.get("sec-fetch-site") == "cross-site":
             return Response(knowledge.t("Cross-site request refused"), 403)
-        if request.method == "POST" and path == "/upload":
+        if request.method == "POST" and path in ("/upload", API_PREFIX + "captures"):
             length = request.headers.get("content-length")
             if length is None or not length.isdigit():
                 return Response(knowledge.t("Content-Length is required"), 411)
             if int(length) > settings.max_size_mb * CHUNK + FORM_OVERHEAD:
                 return Response(knowledge.t("The capture is larger than the {n} MB limit.", n=settings.max_size_mb), 413)
+        if path.startswith(API_PREFIX):
+            sent = request.headers.get("authorization", "")
+            if not sent.startswith("Bearer ") or not records.token_name(settings, sent[7:]):
+                return JSONResponse({"error": knowledge.t("A valid API token is required.")}, 401)
+            return None
         if not path.startswith(OPEN_PATHS) and not auth.valid(request.cookies.get(COOKIE)):
             if path.startswith("/api/"):
                 return JSONResponse({"error": knowledge.t("login required")}, 401)
@@ -254,7 +266,9 @@ def create_app(settings=None, https=False):
             return templates.TemplateResponse(request, "login.html", dict(error=knowledge.t("Too many failed attempts. Try again in 5 minutes.")), status_code=429)
         token = auth.login(client, username, password)
         if not token:
+            log(request, "login_failed", username)
             return templates.TemplateResponse(request, "login.html", dict(error=knowledge.t("The user name or password is wrong.")), status_code=401)
+        log(request, "login")
         resp = RedirectResponse("/", 303)
         resp.set_cookie(COOKIE, token, httponly=True, samesite="strict", secure=https, max_age=12 * 3600)
         return resp
@@ -262,18 +276,24 @@ def create_app(settings=None, https=False):
     @app.post("/logout")
     def logout(request: Request):
         auth.logout(request.cookies.get(COOKIE))
+        log(request, "logout")
         resp = RedirectResponse("/login", 303)
         resp.delete_cookie(COOKIE)
         return resp
 
     @app.get("/", response_class=HTMLResponse)
-    def home(request: Request):
-        return page(request, "home.html", section="captures", analyses=engine.list_analyses(settings), max_mb=settings.max_size_mb, ttl=settings.ttl_days)
+    def home(request: Request, q: str = ""):
+        return page(request, "home.html", section="captures", analyses=records.search(settings, engine.list_analyses(settings), q), search=q, max_mb=settings.max_size_mb, ttl=settings.ttl_days)
 
     @app.post("/upload", response_class=HTMLResponse)
-    async def upload(request: Request, capture: UploadFile, keylog: UploadFile | None = None, rsa_key: UploadFile | None = None,
+    async def upload(request: Request, capture: UploadFile, more: list[UploadFile] = (), keylog: UploadFile | None = None, rsa_key: UploadFile | None = None,
                      host_a: str = Form(""), host_b: str = Form(""), port: str = Form(""), start: str = Form(""),
                      end: str = Form(""), display_filter: str = Form("")):
+        job = await accept(capture, keylog, rsa_key, host_a, host_b, port, start, end, display_filter, more)
+        log(request, "upload", capture.filename)
+        return page(request, "_job.html", job=job)
+
+    async def accept(capture, keylog, rsa_key, host_a, host_b, port, start, end, display_filter, more=()):
         if not capture.filename:
             _bad(knowledge.t("Choose a capture file."))
         flt = tshark.Filter(_ip(host_a, "First host"), _ip(host_b, "Second host"), _opt_int(port, "Port"), _epoch(start), _epoch(end),
@@ -282,6 +302,12 @@ def create_app(settings=None, https=False):
         try:
             path = Path(tmp) / "capture"
             await _save(capture, path, settings.max_size_mb * CHUNK, "Capture")
+            parts = [path]
+            for i, extra in enumerate(p for p in more if p.filename):
+                parts.append(Path(tmp) / f"part-{i}")
+                await _save(extra, parts[-1], settings.max_size_mb * CHUNK, "Capture")
+            name = capture.filename if len(parts) == 1 else knowledge.t("{name} and {n} more", name=capture.filename, n=len(parts) - 1)
+            path = engine.join_parts(parts, tmp, settings)
             kl = rk = None
             if keylog and keylog.filename:
                 kl = Path(tmp) / "keylog"
@@ -289,13 +315,15 @@ def create_app(settings=None, https=False):
             if rsa_key and rsa_key.filename:
                 rk = Path(tmp) / "rsa.pem"
                 await _save(rsa_key, rk, KEY_LIMIT, "RSA key")
-            job = jobs.submit(tmp, path, capture.filename, kl, rk, flt)
-        except (HTTPException, QueueFull) as e:
+            job = jobs.submit(tmp, path, name.removesuffix(".gz"), kl, rk, flt)
+        except (HTTPException, QueueFull, engine.CaptureTooLarge, engine.CompressedCapture, tshark.TsharkError) as e:
             shutil.rmtree(tmp, ignore_errors=True)
             if isinstance(e, QueueFull):
                 _bad(knowledge.t("Too many analyses are waiting. Try again in a moment."), 429)
+            if not isinstance(e, HTTPException):
+                _bad(str(e), 413 if isinstance(e, engine.CaptureTooLarge) else 400)
             raise
-        return page(request, "_job.html", job=job)
+        return job
 
     @app.get("/jobs/{jid}", response_class=HTMLResponse)
     def job_status(request: Request, jid: str):
@@ -314,18 +342,31 @@ def create_app(settings=None, https=False):
         return page(request, "_job.html", job=job)
 
     @app.post("/a/{aid}/delete")
-    def delete(aid: str):
+    def delete(request: Request, aid: str):
+        log(request, "delete", aid)
         engine.delete(aid, settings)
         return RedirectResponse("/", 303)
 
     def tab_context(a, tab):
         with a.connect() as db:
             if tab == "overview":
-                return dict(o=reports.overview(db, a.meta), budget=reports.time_budget(db), slow=reports.slowest(db, limit=5), quality=reports.quality(a.meta))
+                ctx = dict(o=reports.overview(db, a.meta), budget=reports.time_budget(db), slow=reports.slowest(db, limit=5), quality=reports.quality(a.meta),
+                           missed=reports.target_misses(db, records.thresholds(settings)["targets"]), base=None, drift=[])
+                base_id = records.baseline(settings)
+                if base_id and base_id != a.id:
+                    try:
+                        base = engine.open_analysis(base_id, settings)
+                    except engine.NotFound:
+                        return ctx
+                    with base.connect() as bd:
+                        ctx.update(base=base, drift=reports.drift(db, bd))
+                return ctx
             if tab == "backends":
                 return dict(backends=reports.backends(db))
             if tab == "issues":
                 return dict(issues=reports.issues(db, a.meta))
+            if tab == "tls":
+                return dict(tls=reports.tls_health(db))
         return {}
 
     @app.get("/a/{aid}", response_class=HTMLResponse)
@@ -334,7 +375,19 @@ def create_app(settings=None, https=False):
             _bad(knowledge.t("This view does not exist."), 404)
         a = opened(aid)
         name = "analysis.html" if not is_htmx(request) else f"_tab_{tab}.html"
-        return page(request, name, tab=tab, **capture_ctx(a), **tab_context(a, tab))
+        return page(request, name, tab=tab, baseline=records.baseline(settings), **capture_ctx(a), **tab_context(a, tab))
+
+    @app.post("/a/{aid}/notes")
+    def save_notes(request: Request, aid: str, case: str = Form(""), tags: str = Form(""), note: str = Form("")):
+        records.save_notes(settings, opened(aid).id, case, tags, note)
+        log(request, "notes", aid)
+        return RedirectResponse(f"/a/{aid}", 303)
+
+    @app.post("/a/{aid}/baseline")
+    def set_baseline(request: Request, aid: str):
+        records.set_baseline(settings, opened(aid).id)
+        log(request, "baseline", aid)
+        return RedirectResponse(f"/a/{aid}", 303)
 
     @app.get("/a/{aid}/issue/{key}", response_class=HTMLResponse)
     def issue(request: Request, aid: str, key: str):
@@ -422,6 +475,91 @@ def create_app(settings=None, https=False):
                     ctx["result"] = compare.captures(da, db, fa, fb)
         return page(request, "compare.html", **ctx)
 
+    @app.get("/trend", response_class=HTMLResponse)
+    def trend_page(request: Request, url: str = ""):
+        analyses = [engine.open_analysis(m["id"], settings) for m in engine.list_analyses(settings)]
+        return page(request, "trend.html", section="trend", url=url, names=reports.url_names(analyses), rows=reports.trend(analyses, url) if url else [])
+
+    def preferences(request, **extra):
+        limits = records.thresholds(settings)
+        return page(request, "preferences.html", section="preferences", limits=limits, targets="\n".join(f"{t['pattern']} {t['seconds']:g}" for t in limits["targets"]),
+                    tokens=records.tokens(settings), new_token=None, error=None, **extra)
+
+    @app.get("/preferences", response_class=HTMLResponse)
+    def preferences_page(request: Request):
+        return preferences(request)
+
+    @app.post("/preferences")
+    def preferences_save(request: Request, slow: str = Form(""), targets: str = Form("")):
+        try:
+            value = float(slow)
+        except ValueError:
+            _bad(knowledge.t("Enter the slow request limit in seconds."))
+        if value <= 0:
+            _bad(knowledge.t("Enter the slow request limit in seconds."))
+        parsed, bad = records.parse_targets(targets)
+        if bad:
+            _bad(knowledge.t("This line is not a URL pattern and seconds: {value}", value=bad[0]))
+        records.save_thresholds(settings, value, parsed)
+        log(request, "thresholds")
+        return RedirectResponse("/preferences", 303)
+
+    @app.post("/tokens", response_class=HTMLResponse)
+    def token_add(request: Request, name: str = Form("")):
+        token = records.new_token(settings, name)
+        log(request, "token_created", name)
+        limits = records.thresholds(settings)
+        return page(request, "preferences.html", section="preferences", limits=limits, targets="\n".join(f"{t['pattern']} {t['seconds']:g}" for t in limits["targets"]),
+                    tokens=records.tokens(settings), new_token=token, error=None)
+
+    @app.post("/tokens/{tid}/delete")
+    def token_delete(request: Request, tid: str):
+        records.revoke_token(settings, tid)
+        log(request, "token_revoked", tid)
+        return RedirectResponse("/preferences", 303)
+
+    @app.get("/audit", response_class=HTMLResponse)
+    def audit_page(request: Request, event: str = ""):
+        return page(request, "audit.html", section="preferences", rows=records.read_audit(settings, event or None), event=event,
+                    events=("login", "login_failed", "logout", "upload", "delete", "export", "notes", "baseline", "thresholds", "token_created", "token_revoked", "api_upload", "api_delete"))
+
+    @app.post(API_PREFIX + "captures", status_code=202)
+    async def api_upload(request: Request, capture: UploadFile, keylog: UploadFile | None = None, rsa_key: UploadFile | None = None,
+                         host_a: str = Form(""), host_b: str = Form(""), port: str = Form(""), start: str = Form(""), end: str = Form(""), display_filter: str = Form("")):
+        job = await accept(capture, keylog, rsa_key, host_a, host_b, port, start, end, display_filter)
+        log(request, "api_upload", capture.filename)
+        return dict(job=job.id, state=job.state)
+
+    @app.get(API_PREFIX + "jobs/{jid}")
+    def api_job(jid: str):
+        job = jobs.get(jid)
+        if job is None:
+            _bad(knowledge.t("This analysis job is no longer known. Upload the capture again."), 404)
+        return dict(job=job.id, state=job.state, analysis=job.analysis_id, error=job.error)
+
+    @app.get(API_PREFIX + "analyses")
+    def api_analyses():
+        return [{k: m.get(k) for k in ("id", "filename", "created", "size", "packets", "connections", "transactions")} for m in engine.list_analyses(settings)]
+
+    @app.get(API_PREFIX + "analyses/{aid}")
+    def api_analysis(aid: str):
+        return opened(aid).meta
+
+    @app.delete(API_PREFIX + "analyses/{aid}")
+    def api_delete(request: Request, aid: str):
+        log(request, "api_delete", aid)
+        engine.delete(opened(aid).id, settings)
+        return dict(deleted=aid)
+
+    @app.get(API_PREFIX + "analyses/{aid}/{section}")
+    def api_section(aid: str, section: str):
+        if section not in API_SECTIONS:
+            _bad(knowledge.t("Unknown data set."), 404)
+        a = opened(aid)
+        with a.connect() as db:
+            return JSONResponse(json.loads(json.dumps({"overview": lambda: reports.overview(db, a.meta), "urls": lambda: reports.url_groups(db), "connections": lambda: reports.connections(db),
+                                                       "hosts": lambda: reports.hosts(db), "issues": lambda: reports.issues(db, a.meta), "slowest": lambda: reports.slowest(db)}[section](), default=str)))
+
     @app.get("/capture-guide", response_class=HTMLResponse)
     def guide_page(request: Request):
         q = dict(request.query_params)
@@ -436,15 +574,25 @@ def create_app(settings=None, https=False):
     @app.get("/export/{aid}/report.html")
     def export_report(request: Request, aid: str):
         a = opened(aid)
+        log(request, "export", f"{aid} report")
         with a.connect() as db:
             ctx = dict(a=a, m=a.meta, o=reports.overview(db, a.meta), budget=reports.time_budget(db), issues=reports.issues(db, a.meta), urls=reports.url_groups(db),
-                       slow=reports.slowest(db), quality=reports.quality(a.meta), backends=reports.backends(db), css=(HERE / "static/app.css").read_text())
+                       slow=reports.slowest(db), quality=reports.quality(a.meta), backends=reports.backends(db), notes=records.notes(settings, aid), css=(HERE / "static/app.css").read_text())
         html = templates.get_template("report.html").render(ctx)
         return Response(html, media_type="text/html; charset=utf-8", headers=_attachment(a, "report.html"))
 
-    @app.get("/export/{aid}/{name}.{fmt}")
-    def export_table(aid: str, name: str, fmt: str):
+    @app.get("/export/{aid}/requests.har")
+    def export_har(request: Request, aid: str):
         a = opened(aid)
+        log(request, "export", f"{aid} har")
+        with a.connect() as db:
+            body = exports.har(db, inspect_filter(dict(request.query_params)))
+        return Response(body, media_type="application/json", headers=_attachment(a, "requests.har"))
+
+    @app.get("/export/{aid}/{name}.{fmt}")
+    def export_table(request: Request, aid: str, name: str, fmt: str):
+        a = opened(aid)
+        log(request, "export", f"{aid} {name}.{fmt}")
         if name not in exports.TABLES or fmt not in exports.FORMATS:
             _bad(knowledge.t("This export does not exist."), 404)
         with a.connect() as db:
@@ -452,8 +600,9 @@ def create_app(settings=None, https=False):
         return Response(body, media_type=exports.FORMATS[fmt], headers=_attachment(a, f"{name}.{fmt}"))
 
     @app.get("/export/{aid}/conn/{stream}.pcapng")
-    def export_stream(aid: str, stream: int):
+    def export_stream(request: Request, aid: str, stream: int):
         a = opened(aid)
+        log(request, "export", f"{aid} connection {stream}")
         capture = a.dir / "capture"
         if not capture.exists():
             _bad(knowledge.t("The original capture was not kept, so packets cannot be exported."), 404)
@@ -468,6 +617,15 @@ def create_app(settings=None, https=False):
                 _bad(str(e), 500)
             body = out.read_bytes()
         return Response(body, media_type="application/vnd.tcpdump.pcap", headers=_attachment(a, f"connection-{stream}.pcapng"))
+
+    @app.get("/api/a/{aid}/waterfall/{stream}")
+    def api_waterfall(aid: str, stream: int):
+        a = opened(aid)
+        with a.connect() as db:
+            data = reports.waterfall(db, stream)
+        if data is None:
+            _bad(knowledge.t("This connection does not exist."), 404)
+        return data
 
     @app.get("/api/a/{aid}/{what}")
     def api(aid: str, what: str):

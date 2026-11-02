@@ -113,6 +113,16 @@
     }),
   };
 
+  const PHASE_COLORS = { connect_time: "#7b93ab", tls_time: "#7e6bc4", request_clean: "#1f9e8f", network: "#2f7fd1", queue_time: "#e0a82e", service: "#e2702a",
+    transfer_clean: "#3e9b5f", retrans_time: "#c8324a", zero_window_time: "#a8489f", delayed_ack_time: "#96764a" };
+  CHARTS.waterfall = (data) => ({
+    grid: { left: 200, right: 16, top: 34, bottom: 28 }, legend: { top: 0, type: "scroll", icon: "roundRect", itemWidth: 12, itemHeight: 8 }, tooltip: { trigger: "axis", axisPointer: { type: "shadow" } },
+    xAxis: { type: "value", axisLabel: { color: MUTED, formatter: (v) => secs(v) }, splitLine: { lineStyle: { color: LINE } } },
+    yAxis: { type: "category", inverse: true, data: data.rows.map((d) => d.label), axisLabel: { color: INK, width: 186, overflow: "truncate" } },
+    series: [{ type: "bar", stack: "t", silent: true, itemStyle: { color: "transparent" }, data: data.rows.map((d) => d.start), tooltip: { show: false } }].concat(
+      Object.keys(data.phases).map((p) => ({ name: data.phases[p], type: "bar", stack: "t", itemStyle: { color: PHASE_COLORS[p] }, data: data.rows.map((d) => d[p]), tooltip: { valueFormatter: secs } }))),
+  });
+
   function rangeLink(el, chart, data) {
     const link = Object.assign(document.createElement("a"), { className: "button", hidden: true, textContent: t("Inspect this period") });
     el.parentElement.append(link);

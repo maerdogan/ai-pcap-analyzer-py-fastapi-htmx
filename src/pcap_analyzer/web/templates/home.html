@@ -5,6 +5,7 @@
 <div class="columns">
   <section class="panel flush">
     <div class="section-head"><h2>{{ _("Analyzed captures") }}</h2>{% if analyses %}<span class="hint">{{ _("Kept for {n} days. Everyone with the login sees this list.", n=ttl) }}</span>{% endif %}</div>
+    <form class="list-search" method="get" action="/" role="search"><input type="search" id="q" name="q" value="{{ search }}" aria-label="{{ _("Search files, cases, tags and notes") }}" placeholder="{{ _("Search files, cases, tags and notes") }}"></form>
     {% if analyses %}
     <ol class="captures">
       {% for m in analyses %}
@@ -30,6 +31,11 @@
       <label class="drop"><span>{{ _("Capture file, up to {n} MB (.cap, .pcap, .pcapng)", n=max_mb) }}</span>
         <input type="file" name="capture" required>
       </label>
+      <details>
+        <summary>{{ _("Add more parts of the same capture") }}</summary>
+        <div class="fields"><label>{{ _("More parts") }} <input type="file" name="more" multiple></label></div>
+        <p class="hint">{{ _("Parts are joined in time order. gzip files are unpacked first. The limit applies to the joined size.") }}</p>
+      </details>
       <details>
         <summary>{{ _("Decrypt HTTPS") }}</summary>
         <div class="fields">

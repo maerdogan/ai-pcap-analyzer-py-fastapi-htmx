@@ -32,6 +32,12 @@
   {{ ui.waterfall(d.top, a) }}
 </section>
 {% endif %}
+{% if d.total %}
+<section class="panel">
+  <h2>{{ _("Requests on a time axis") }}</h2>
+  <div class="chart" data-chart="waterfall" data-src="/api/a/{{ a.id }}/waterfall/{{ c.stream }}" data-name="connection-{{ c.stream }}"></div>
+</section>
+{% endif %}
 <section class="panel">
   <h2>{{ _("TCP details") }}</h2>
   <dl class="facts">

@@ -1,0 +1,34 @@
+image:
+  repository: ghcr.io/maerdogan/ai-pcap-analyzer-py-fastapi-htmx
+  tag: "" # the chart's appVersion when empty
+  pullPolicy: IfNotPresent
+
+# Name of a Secret with the key password-hash. Create it first, see docs/install.md.
+adminSecret: pcap-analyzer-admin
+
+storage:
+  size: 20Gi
+  storageClass: "" # the cluster default when empty
+
+resources:
+  requests: { cpu: 250m, memory: 512Mi }
+  limits: { cpu: "2", memory: 2Gi }
+
+# Sent to the app as environment variables, for example PCAP_ANALYZER_TTL_DAYS: "14".
+env: {}
+
+ingress:
+  enabled: false
+  className: nginx
+  host: pcap.example.internal
+  tlsSecret: pcap-analyzer-tls
+
+gateway:
+  enabled: false
+  parentName: gateway
+  parentNamespace: ""
+  host: pcap.example.internal
+
+networkPolicy:
+  enabled: false
+  ingressNamespace: ingress-nginx

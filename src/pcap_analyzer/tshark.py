@@ -6,6 +6,7 @@ Ubuntu's AppArmor profile stops tshark from reading most other paths.
 import ipaddress
 import os
 import re
+import resource
 import select
 import shutil
 import subprocess
@@ -15,6 +16,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 MIN_VERSION = (4, 0)
+FILE_LIMIT = 1 << 34  # tshark writes no files here, apart from its temporary reassembly data
 POLL_S = 0.2
 AGG = "\x1f"
 
@@ -31,7 +33,8 @@ MULTI = [
     "http.response.line", "tcp.segment", "tls.segment", "tls.record.content_type", "tls.handshake.type",
     "tls.handshake.extensions_server_name", "tls.handshake.extensions.supported_version",
     "http2.type", "http2.streamid", "http2.flags", "http2.length", "http2.header.count",
-    "http2.header.name", "http2.header.value", "http.file_data",
+    "http2.header.name", "http2.header.value", "http.file_data", "tls.handshake.ciphersuite", "tls.handshake.extensions_alpn_str",
+    "tls.alert_message.desc", "x509af.utcTime",
 ]
 # Flags that tshark's TCP analysis sets on a packet. Stored as events.
 EVENTS = [
@@ -153,6 +156,55 @@ def _command(binary, capture, keylog, rsa_key, expr):
     return cmd
 
 
+# Inside new user, mount and network namespaces, only this run's own folder stays visible.
+_ISOLATE = """
+mount --bind "$1" /mnt
+mount -t tmpfs tmpfs /tmp
+mkdir -p "$1"
+mount --move /mnt "$1"
+if [ -d "$2" ]; then mount -t tmpfs tmpfs "$2"; fi
+shift 2
+exec "$@"
+"""
+_can_isolate = None
+
+
+def can_isolate():
+    """True where this kernel lets an unprivileged process make namespaces. Pods and locked-down hosts usually do not."""
+    global _can_isolate
+    if _can_isolate is None:
+        if os.environ.get("PCAP_ANALYZER_SANDBOX") == "0" or not shutil.which("unshare"):
+            _can_isolate = False
+        else:
+            with tempfile.TemporaryDirectory(prefix="pcap-analyzer-", dir="/tmp") as tmp:
+                _can_isolate = subprocess.run(isolated(["true"], tmp, "/nonexistent"), capture_output=True).returncode == 0
+    return _can_isolate
+
+
+def isolated(cmd, folder, workdir):
+    return ["unshare", "-Urmn", "sh", "-ec", _ISOLATE, "sh", str(folder), str(workdir), *cmd]
+
+
+def _limits(seconds):
+    """Set in the child before tshark starts, so one bad capture cannot take the host down."""
+    def apply():
+        resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
+        resource.setrlimit(resource.RLIMIT_FSIZE, (FILE_LIMIT, FILE_LIMIT))
+        if seconds:
+            resource.setrlimit(resource.RLIMIT_CPU, (seconds, seconds))
+    return apply
+
+
+def merge(paths, out, binary="mergecap"):
+    """Join parts of one capture into a single file, in time order."""
+    try:
+        done = subprocess.run([binary, "-w", str(out), *map(str, paths)], capture_output=True, text=True)
+    except OSError as e:
+        raise TsharkError(f"mergecap could not be started: {e}") from e
+    if done.returncode != 0:
+        raise TsharkError(done.stderr.strip().splitlines()[-1] if done.stderr.strip() else "mergecap could not join the files")
+
+
 def _private_copy(src, directory, name):
     dst = Path(directory) / name
     shutil.copyfile(src, dst)
@@ -188,7 +240,7 @@ def _lines(proc, limit):
         yield tail.decode("utf-8", "replace")
 
 
-def packets(path, keylog=None, rsa_key=None, flt=None, binary="tshark", warnings=None, limit=None):
+def packets(path, keylog=None, rsa_key=None, flt=None, binary="tshark", warnings=None, limit=None, workdir=None, seconds=0):
     """Yield packets as dicts. Non-fatal problems are appended to warnings."""
     limit = limit or Limit()
     expr = flt.expression() if flt else None
@@ -200,7 +252,11 @@ def packets(path, keylog=None, rsa_key=None, flt=None, binary="tshark", warnings
         env = dict(os.environ, LC_ALL="C")
         with tempfile.TemporaryFile(mode="w+", dir=tmp) as errfile:
             try:
-                proc = subprocess.Popen(_command(binary, capture, kl, rk, expr), stdout=subprocess.PIPE, stderr=errfile, env=env)
+                cmd = _command(binary, capture, kl, rk, expr)
+                found = os.path.realpath(shutil.which(binary) or binary)
+                if workdir and not found.startswith(("/tmp/", str(workdir))) and can_isolate():  # a program kept there would disappear with them
+                    cmd = isolated(cmd, tmp, workdir)
+                proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=errfile, env=env, preexec_fn=_limits(seconds))
             except OSError as e:
                 raise TsharkError(f"tshark could not be started: {e}") from e
             limit.attach(proc)

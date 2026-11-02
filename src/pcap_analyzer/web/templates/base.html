@@ -32,7 +32,9 @@
       <nav class="sections" aria-label="{{ _("Main") }}">
         <a href="/" {% if section == "captures" %}aria-current="page"{% endif %}>{{ _("Captures") }}</a>
         <a href="/compare" {% if section == "compare" %}aria-current="page"{% endif %}>{{ _("Compare") }}</a>
+        <a href="/trend" {% if section == "trend" %}aria-current="page"{% endif %}>{{ _("Trend") }}</a>
         <a href="/capture-guide" {% if section == "guide" %}aria-current="page"{% endif %}>{{ _("Capture guide") }}</a>
+        <a href="/preferences" {% if section == "preferences" %}aria-current="page"{% endif %}>{{ _("Preferences") }}</a>
       </nav>
       <div class="bar-end">
         {{ ui.language_form(request) }}

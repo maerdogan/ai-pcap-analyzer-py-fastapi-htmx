@@ -323,7 +323,7 @@ def test_secrets_are_not_stored(samples, settings, tmp_path):
     assert all("sample-gen" in t["req_headers"] for t in txns(a))
 
 
-@pytest.mark.parametrize("magic", [b"\x1f\x8b\x08\x00", b"\x28\xb5\x2f\xfd", b"\x04\x22\x4d\x18"])
+@pytest.mark.parametrize("magic", [b"\x28\xb5\x2f\xfd", b"\x04\x22\x4d\x18"])
 def test_compressed_capture_is_refused(settings, tmp_path, magic):
     p = tmp_path / "c.pcap"
     p.write_bytes(magic + b"data")
@@ -331,11 +331,35 @@ def test_compressed_capture_is_refused(settings, tmp_path, magic):
         engine.analyze(p, settings=settings)
 
 
-def test_real_gzip_is_refused(samples, settings, tmp_path):
+def test_gzip_capture_opens(samples, settings, tmp_path):
     p = tmp_path / "c.pcap.gz"
     p.write_bytes(gzip.compress((samples / "http_scenarios.pcap").read_bytes()))
+    a = engine.analyze(p, settings=settings)
+    assert a.meta["filename"] == "c.pcap" and a.meta["transactions"] == 18
+
+
+def test_gzip_stops_at_the_limit_while_unpacking(settings, tmp_path):
+    settings.max_size_mb = 1
+    p = tmp_path / "bomb.pcap.gz"
+    p.write_bytes(gzip.compress(bytes(3 << 20)))
+    with pytest.raises(engine.CaptureTooLarge):
+        engine.analyze(p, settings=settings)
+
+
+def test_damaged_gzip_is_refused(settings, tmp_path):
+    p = tmp_path / "c.pcap.gz"
+    p.write_bytes(gzip.compress(bytes(1000))[:20])
     with pytest.raises(engine.CompressedCapture):
         engine.analyze(p, settings=settings)
+
+
+def test_parts_become_one_capture(samples, settings, tmp_path):
+    a = samples / "http_scenarios.pcap"
+    gz = tmp_path / "b.pcap.gz"
+    gz.write_bytes(gzip.compress((samples / "https_tls13.pcap").read_bytes()))
+    joined = engine.join_parts([a, gz], tmp_path, settings)
+    got = engine.analyze(joined, settings=settings, display_name="both")
+    assert got.meta["packets"] > engine.analyze(a, settings=settings).meta["packets"]
 
 
 def test_purge_removes_stale_temp_files_only(settings, tmp_path):

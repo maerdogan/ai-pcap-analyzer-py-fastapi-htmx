@@ -1,6 +1,24 @@
 {% import "_macros.html" as ui with context %}
 {{ ui.quality(quality) }}
 {% for w in m.warnings %}<p class="warn">{{ warning_text()[w] }}</p>{% endfor %}
+{% if drift %}
+<section class="panel flush">
+  <h2>{{ _("Different from the baseline ({name})", name=base.meta.filename) }}</h2>
+  <div class="table-wrap"><table>
+    <thead><tr><th>{{ _("Method") }}</th><th>URL</th><th>{{ _("Change") }}</th><th class="num">{{ _("Baseline") }}</th><th class="num">{{ _("Now") }}</th></tr></thead>
+    <tbody>{% for u in drift %}<tr><td>{{ u.method }}</td><td>{{ u.url }}</td><td>{{ _({"new": "New URL", "failing": "More failures", "slower": "Slower"}[u.why]) }}</td><td class="num">{{ u.base_p95 | seconds }}</td><td class="num">{{ u.p95_total | seconds }}</td></tr>{% endfor %}</tbody>
+  </table></div>
+</section>
+{% endif %}
+{% if missed %}
+<section class="panel flush">
+  <h2>{{ _("Over the URL targets") }}</h2>
+  <div class="table-wrap"><table>
+    <thead><tr><th>{{ _("Method") }}</th><th>URL</th><th class="num">{{ _("Target") }}</th><th class="num">{{ _("95th percentile") }}</th><th class="num">{{ _("Requests over target") }}</th></tr></thead>
+    <tbody>{% for u in missed %}<tr><td>{{ u.method }}</td><td>{{ u.url }}</td><td class="num">{{ u.target | seconds }}</td><td class="num">{{ u.p95_total | seconds }}</td><td class="num">{{ u.over }}</td></tr>{% endfor %}</tbody>
+  </table></div>
+</section>
+{% endif %}
 <div class="columns">
   <div class="stack">
     {% if o.http.requests %}
@@ -28,6 +46,18 @@
       {% endif %}
     </section>
     {% if o.http.requests %}<section class="panel"><h2>{{ _("Status codes") }}</h2><div class="chart" data-chart="statuses" data-src="/api/a/{{ a.id }}/statuses" data-name="status-codes"></div></section>{% endif %}
+    <section class="panel">
+      <h2>{{ _("Case and notes") }}</h2>
+      <form method="post" action="/a/{{ a.id }}/notes">
+        <input type="hidden" name="csrf_token" value="{{ form_token() }}">
+        <div class="fields">
+          <label>{{ _("Case number") }} <input id="case" name="case" maxlength="80" value="{{ notes.case }}"></label>
+          <label>{{ _("Tags") }} <input id="tags" name="tags" maxlength="200" value="{{ notes.tags }}"></label>
+          <label class="wide">{{ _("Note") }} <textarea id="note" name="note" rows="3" maxlength="4000">{{ notes.note }}</textarea></label>
+        </div>
+        <button>{{ _("Save notes") }}</button>
+      </form>
+    </section>
     <section class="panel">
       <h2>{{ _("TCP") }}</h2>
       <dl class="facts">

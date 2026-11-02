@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block title %}{{ _("Activity log") }}{% endblock %}
+{% block main %}
+<header class="page-head"><div><h1>{{ _("Activity log") }}</h1><p class="muted">{{ _("The login is shared, so this shows events, addresses and times, not people.") }}</p></div></header>
+<section class="panel">
+  <form method="get" action="/audit" class="inline">
+    <label>{{ _("Event") }} <select id="event" name="event" data-submit><option value="">{{ _("All") }}</option>{% for e in events %}<option {% if e == event %}selected{% endif %}>{{ e }}</option>{% endfor %}</select></label>
+  </form>
+</section>
+{% if rows %}
+<section class="panel flush"><div class="table-wrap"><table>
+  <thead><tr><th>{{ _("Time") }}</th><th>{{ _("Event") }}</th><th>{{ _("Address") }}</th><th>{{ _("Details") }}</th></tr></thead>
+  <tbody>{% for r in rows %}<tr><td>{{ r.time | when }}</td><td>{{ r.event }}</td><td>{{ r.client }}</td><td>{{ r.detail }}</td></tr>{% endfor %}</tbody>
+</table></div></section>
+{% else %}<p class="empty">{{ _("No events yet.") }}</p>{% endif %}
+{% endblock %}

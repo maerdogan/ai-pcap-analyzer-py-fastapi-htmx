@@ -48,12 +48,15 @@ done
 cp -r "$T/usr/share/wireshark" "$OUT/tshark/share/"
 rm -rf "$OUT/tshark/share/wireshark/doc"
 # tshark runs through Alpine's musl loader, so it finds its libraries wherever the folder is.
-cat >"$OUT/tshark/bin/tshark" <<'EOF'
+cp -a "$T/usr/bin/mergecap" "$OUT/tshark/bin/mergecap.real"
+for tool in tshark mergecap; do
+  cat >"$OUT/tshark/bin/$tool" <<EOF
 #!/bin/sh
-dir=$(dirname "$(readlink -f "$0")")/..
-exec "$dir/lib/ld-musl-x86_64.so.1" --library-path "$dir/lib" "$dir/bin/tshark.real" "$@"
+dir=\$(dirname "\$(readlink -f "\$0")")/..
+exec "\$dir/lib/ld-musl-x86_64.so.1" --library-path "\$dir/lib" "\$dir/bin/$tool.real" "\$@"
 EOF
-chmod +x "$OUT/tshark/bin/tshark"
+  chmod +x "$OUT/tshark/bin/$tool"
+done
 
 echo "Checking the runtime from another path..."
 mkdir "$WORK/moved"

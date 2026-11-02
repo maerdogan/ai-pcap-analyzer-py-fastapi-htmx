@@ -15,6 +15,7 @@ class Settings:
     ttl_days: int = field(default_factory=lambda: int(os.environ.get("PCAP_ANALYZER_TTL_DAYS", "7")))
     tshark: str = field(default_factory=lambda: os.environ.get("PCAP_ANALYZER_TSHARK", "tshark"))
     keep_capture: bool = field(default_factory=lambda: os.environ.get("PCAP_ANALYZER_KEEP_CAPTURE", "1") != "0")
+    mergecap: str = field(default_factory=lambda: os.environ.get("PCAP_ANALYZER_MERGECAP", "mergecap"))
     max_jobs: int = field(default_factory=lambda: int(os.environ.get("PCAP_ANALYZER_MAX_JOBS", "2")))
     analysis_timeout_s: int = field(default_factory=lambda: int(os.environ.get("PCAP_ANALYZER_ANALYSIS_TIMEOUT_S", "600")))
     admin_user: str = field(default_factory=lambda: os.environ.get("PCAP_ANALYZER_ADMIN_USER", "admin"))

@@ -259,6 +259,8 @@ pre { background: var(--inset); border-radius: 10px; padding: .6rem .75rem; marg
 .inline button { margin: 0; }
 
 /* Capture list, grouped by day like a fixture list */
+.list-search { padding: 0 1.2rem .6rem; margin: 0; }
+textarea { font: inherit; width: 100%; padding: .42rem .65rem; margin-top: .2rem; border: 1px solid transparent; border-radius: 10px; background: var(--inset); color: var(--ink); }
 .captures { list-style: none; margin: 0; padding: 0; }
 .day { padding: .55rem 1.2rem .3rem; font-weight: 650; border-top: 1px solid var(--line); }
 .capture-row { display: grid; grid-template-columns: 3.2rem minmax(0, 1fr) auto auto; gap: .9rem; align-items: center; padding: .5rem 1.2rem; }

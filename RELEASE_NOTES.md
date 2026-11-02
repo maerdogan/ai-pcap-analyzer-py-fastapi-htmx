@@ -2,6 +2,32 @@
 
 All changes made on the same day are one minor version.
 
+## 0.3.0 (2026-11-03)
+
+### Added
+
+- REST API under `/api/v1` with tokens you create and revoke in Preferences. See `docs/api.md`.
+- Limits in Preferences: the slow request limit, and targets per URL pattern with a report of what went over.
+- Baseline analysis: later analyses list the URLs that got slower, started failing or are new. A Trend page follows one URL across analyses.
+- Case number, tags and notes on an analysis, a search over them, and the notes in the HTML report.
+- Activity log of sign-ins, uploads, downloads and deletions, with address and time. The login is shared, so it does not name people.
+- HAR download of all or filtered requests, with the same masking as the rest of the app.
+- Requests of a connection on one time axis, saved as PNG or SVG.
+- `pcap-analyzer check` exits with code 2 when an analysis breaks a limit, for CI.
+- W3C `traceparent` gives an exact match between two capture points. `PCAP_ANALYZER_REQUEST_ID_HEADER` sets another header name.
+- TLS tab: versions, ciphers, ALPN, resumed sessions, unanswered ClientHello, alerts and certificate end dates, without a key.
+- WebSocket upgrades are measured on their own, so a long-lived connection no longer counts as slow. gRPC status from HTTP/2 trailers, with a gRPC errors issue.
+- gzip captures open, and unpacking stops at the size limit. Several parts of one capture can be joined with `mergecap`.
+- tshark runs with CPU and file limits. Where the host allows user namespaces, it also runs without network and sees only its own files. `PCAP_ANALYZER_SANDBOX=0` turns that off.
+- `kubernetes/helm/pcap-analyzer` chart, `tools/pcap-collect.sh` to capture from one or two places and upload, `docs/usage.md` and `docs/api.md`.
+- `requirements.lock`, a pinned base image, a dependency audit in CI and an SBOM in each Release.
+- `SECURITY.md`, `CONTRIBUTING.md`, issue templates, and exact source locations for GPL components in `THIRD_PARTY.md`.
+
+### Changed
+
+- zstd and lz4 captures stay refused, because their size cannot be limited the same way.
+- Analyses saved by 0.2.0 still open. Their TLS tab asks you to analyze the capture again.
+
 ## 0.2.0 (2026-11-02)
 
 ### Added

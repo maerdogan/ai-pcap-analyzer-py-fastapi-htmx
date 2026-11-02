@@ -1,11 +1,12 @@
 """Turn reports into downloadable files."""
 import csv
+import datetime
 import io
 import json
 
 from openpyxl import Workbook
 
-from . import knowledge, reports
+from . import __version__, knowledge, reports
 
 REQUEST_COLUMNS = ("id, stream, method, uri, url_template, host, http_version, status, answered, req_frame, resp_frame, connect_time, tls_time, "
                    "request_send, wait, service, ttfb, transfer, total, network, queue_time, retrans_count, retrans_time, zero_window_time, "
@@ -33,6 +34,42 @@ def table(db, name, meta):
     if name == "issues":
         return reports.issues(db, meta)
     raise ValueError(name)
+
+
+def _pairs(block):
+    pairs = []
+    for line in (block or "").splitlines():
+        name, sep, value = line.partition(":")
+        if sep and name:
+            pairs.append(dict(name=name, value=value.strip()))
+    return pairs
+
+
+def _ms(v):
+    return round(v * 1000, 3) if v is not None else -1
+
+
+def _entry(t):
+    tls = t["kind"].startswith("HTTPS")
+    host = t["host"] or t["server_ip"]
+    version = t["http_version"] or "HTTP/1.1"
+    return dict(
+        startedDateTime=datetime.datetime.fromtimestamp(t["req_start"], datetime.UTC).isoformat(), time=_ms(t["total"] or 0),
+        request=dict(method=t["method"], url=f"{'https' if tls else 'http'}://{host}{t['uri'] or ''}", httpVersion=version, cookies=[], headers=_pairs(t["req_headers"]),
+                     queryString=[], headersSize=-1, bodySize=t["req_bytes"] or 0),
+        response=dict(status=t["status"] or 0, statusText=t["phrase"] or "", httpVersion=version, cookies=[], headers=_pairs(t["resp_headers"]),
+                      content=dict(size=t["resp_bytes"] or 0, mimeType=t["content_type"] or ""), redirectURL="", headersSize=-1, bodySize=t["resp_bytes"] or 0),
+        cache={}, serverIPAddress=t["server_ip"], connection=str(t["stream"]),
+        timings=dict(blocked=-1, dns=_ms(t["dns_time"]), connect=_ms(t["connect_time"]), ssl=_ms(t["tls_time"]), send=_ms(t["request_send"]),
+                     wait=_ms(t["wait"] or 0), receive=_ms(t["transfer"] or 0)))
+
+
+def har(db, flt=None):
+    """Requests as a HAR 1.2 file. Headers and URLs are the masked ones, so secrets stay out of it here too."""
+    tw, tp = reports.txn_where(flt or reports.Inspect())
+    rows = reports.rows(db, f"""SELECT t.*, c.kind, c.server_ip FROM http_transactions t JOIN tcp_connections c USING (stream)
+        {"WHERE " + tw if tw else ""} ORDER BY t.req_start""", tp)
+    return json.dumps(dict(log=dict(version="1.2", creator=dict(name="pcap-analyzer", version=__version__), entries=[_entry(t) for t in rows])), indent=1).encode()
 
 
 def _safe(v):

@@ -1,4 +1,4 @@
-FROM python:3.13-slim
+FROM python:3.13-slim@sha256:2d44738ebf4ce5f63b9d9ea871e9c7cfdc0426f7b0c97cac915fd88ded1d86bb
 
 RUN echo "wireshark-common wireshark-common/install-setuid boolean false" | debconf-set-selections \
     && apt-get update \
@@ -6,9 +6,9 @@ RUN echo "wireshark-common wireshark-common/install-setuid boolean false" | debc
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
-COPY pyproject.toml README.md LICENSE ./
+COPY pyproject.toml README.md LICENSE requirements.lock ./
 COPY src ./src
-RUN pip install --no-cache-dir . && rm -rf /app/src
+RUN pip install --no-cache-dir -c requirements.lock . && rm -rf /app/src
 
 RUN useradd --uid 10001 --create-home --home-dir /home/analyzer analyzer && mkdir /data && chown analyzer /data
 ENV PCAP_ANALYZER_WORKDIR=/data HOME=/tmp

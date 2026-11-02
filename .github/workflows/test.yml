@@ -23,6 +23,15 @@ jobs:
       - run: python tools/build_knowledge.py --check
       - run: pytest
 
+  audit:
+    runs-on: ubuntu-latest
+    continue-on-error: true # warns in the run summary and does not block a merge
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - run: pipx run pip-audit==2.9.0 --no-deps --disable-pip -r requirements.lock
+
   install:
     runs-on: ubuntu-latest
     strategy:

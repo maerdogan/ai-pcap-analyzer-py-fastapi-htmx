@@ -33,6 +33,7 @@ jobs:
           mkdir dist
           docker save "pcap-analyzer:${TAG#v}" | gzip > "dist/pcap-analyzer-${TAG#v}-image-amd64.tar.gz"
           python3 -m pip wheel --no-deps . -w dist
+          pipx run --spec cyclonedx-bom==5.0.0 cyclonedx-py requirements requirements.lock --of JSON -o dist/sbom.cdx.json
           (cd dist && sha256sum -- * > SHA256SUMS)
       - name: Publish the image
         run: |

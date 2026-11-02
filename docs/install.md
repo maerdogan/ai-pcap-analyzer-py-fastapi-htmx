@@ -135,6 +135,9 @@ With a self-signed certificate, add `--cafile cert.pem`. On a server with only `
 | `PCAP_ANALYZER_ADMIN_PASSWORD` | | Plain password, as the alternative |
 | `PCAP_ANALYZER_BEHIND_PROXY` | `0` | `1` when an HTTPS proxy is in front |
 | `PCAP_ANALYZER_HSTS_S` | `31536000` | How long browsers must use HTTPS, sent whenever HTTPS is on. `0` tells them to stop. Applies to the host name on every port |
+| `PCAP_ANALYZER_REQUEST_ID_HEADER` | `x-request-id` | Header that follows a request through proxies. `traceparent` is read when it is absent |
+| `PCAP_ANALYZER_MERGECAP` | `mergecap` | Program that joins parts of a capture |
+| `PCAP_ANALYZER_SANDBOX` | on where possible | `0` stops running tshark in its own namespaces |
 | `PCAP_ANALYZER_TRUSTED_PROXIES` | | Proxy addresses or networks whose forwarded headers are believed, such as `10.0.0.5,10.1.0.0/16`. When empty, all users behind the proxy share one login lockout |
 | `PCAP_ANALYZER_WORKDIR` | `~/.local/share/pcap-analyzer` | Where results are saved |
 | `PCAP_ANALYZER_MAX_SIZE_MB` | `100` | Largest accepted capture |

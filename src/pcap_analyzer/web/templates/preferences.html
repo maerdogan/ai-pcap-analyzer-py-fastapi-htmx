@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block title %}{{ _("Preferences") }}{% endblock %}
+{% block main %}
+<header class="page-head"><div><h1>{{ _("Preferences") }}</h1><p class="muted">{{ _("These apply to everyone who uses this install.") }} <a href="/audit">{{ _("Activity log") }}</a></p></div></header>
+<section class="panel">
+  <h2>{{ _("Limits") }}</h2>
+  <form method="post" action="/preferences">
+    <input type="hidden" name="csrf_token" value="{{ form_token() }}">
+    <div class="fields">
+      <label>{{ _("Slow request limit (seconds)") }} <input id="slow" name="slow" inputmode="decimal" value="{{ limits.slow_s }}"></label>
+      <label class="wide">{{ _("URL targets") }} <textarea id="targets" name="targets" rows="5" spellcheck="false" placeholder="/api/orders/* 0.5">{{ targets }}</textarea></label>
+    </div>
+    <p class="hint">{{ _("One URL pattern and its limit in seconds per line. The slow limit applies to captures you analyze from now on. URL targets apply to every capture.") }}</p>
+    <button class="primary">{{ _("Save limits") }}</button>
+  </form>
+</section>
+<section class="panel">
+  <h2>{{ _("API tokens") }}</h2>
+  {% if new_token %}<p class="warn">{{ _("Copy this token now. It is not shown again.") }}</p><pre class="command">{{ new_token }}</pre>{% endif %}
+  {% if tokens %}<table><thead><tr><th>{{ _("Name") }}</th><th>{{ _("Created") }}</th><th></th></tr></thead><tbody>
+    {% for t in tokens %}<tr><td>{{ t.name or t.id }}</td><td>{{ t.created | when }}</td><td class="num"><form method="post" action="/tokens/{{ t.id }}/delete"><input type="hidden" name="csrf_token" value="{{ form_token() }}"><button class="link danger">{{ _("Revoke") }}</button></form></td></tr>{% endfor %}
+  </tbody></table>{% endif %}
+  <form method="post" action="/tokens" class="inline">
+    <input type="hidden" name="csrf_token" value="{{ form_token() }}">
+    <label>{{ _("Name") }} <input id="tokenName" name="name" required maxlength="80"></label>
+    <button>{{ _("Create token") }}</button>
+  </form>
+</section>
+{% endblock %}

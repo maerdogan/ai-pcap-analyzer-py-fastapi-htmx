@@ -118,10 +118,17 @@ def test_cleanup_runs_at_startup(settings, samples):
     assert not a.dir.exists()
 
 
-def test_compressed_upload_shows_a_clear_error(client, samples, tmp_path):
+def test_gzip_upload_is_analyzed(client, samples, tmp_path):
     p = tmp_path / "c.pcap.gz"
     p.write_bytes(gzip.compress((samples / "http_scenarios.pcap").read_bytes()))
-    assert "Decompress the file" in upload(client, p)
+    assert upload(client, p).startswith("/a/")
+
+
+def test_zstd_upload_shows_a_clear_error(client, tmp_path):
+    p = tmp_path / "c.pcap.zst"
+    p.write_bytes(b"\x28\xb5\x2f\xfd" + bytes(40))
+    r = client.post("/upload", files={"capture": (p.name, p.read_bytes())})
+    assert r.status_code == 400 and "Decompress the file" in r.text
 
 
 def test_cookie_flags_and_logout(anon):
