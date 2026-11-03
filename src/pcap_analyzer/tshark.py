@@ -32,7 +32,7 @@ AGG = "\x1f"
 
 SINGLE = [
     "frame.number", "frame.time_epoch", "frame.len", "frame.cap_len", "ip.src", "ip.dst", "ipv6.src", "ipv6.dst",
-    "tcp.stream", "tcp.srcport", "tcp.dstport", "tcp.seq", "tcp.ack", "tcp.len", "ip.id", "tcp.flags", "tcp.window_size", "tcp.window_size_value",
+    "tcp.stream", "tcp.srcport", "tcp.dstport", "tcp.seq", "tcp.seq_raw", "tcp.ack", "tcp.len", "ip.id", "tcp.flags", "tcp.window_size", "tcp.window_size_value",
     "tcp.options.mss_val", "tcp.options.wscale.shift", "tcp.options.sack_perm", "tcp.analysis.initial_rtt",
     "tcp.analysis.ack_rtt", "tcp.analysis.acks_frame", "dns.qry.name", "dns.time", "ip.flags.mf", "icmp.type", "icmp.code",
 ]
@@ -271,12 +271,15 @@ def _private_copy(src, directory, name):
     return dst
 
 
-def extract_stream(capture, stream, out, binary="tshark"):
-    """Write one TCP connection to a new capture file, keeping it whole so Wireshark can reassemble it."""
+def extract_stream(capture, stream, out, binary="tshark", feed=None):
+    """Write one TCP connection to a new capture file, keeping it whole so Wireshark can reassemble it.
+    With feed, tshark reads one part of the capture from a pipe, and stream is the connection's number in that part."""
     with tempfile.TemporaryDirectory(prefix="pcap-analyzer-", dir="/tmp") as tmp:
-        src = _private_copy(capture, tmp, "capture")
+        src = "-" if feed else _private_copy(capture, tmp, "capture")
         dst = Path(tmp) / "out.pcapng"
-        done = subprocess.run([binary, "-n", "-r", str(src), "-Y", f"tcp.stream == {int(stream)}", "-w", str(dst)], capture_output=True, text=True)
+        data = b"".join(feed()) if feed else None
+        done = subprocess.run([binary, "-n", "-r", str(src), "-Y", f"tcp.stream == {int(stream)}", "-w", str(dst)], input=data, capture_output=True)
+        done.stderr = done.stderr.decode("utf-8", "replace")
         if done.returncode != 0:
             raise TsharkError(done.stderr.strip().splitlines()[-1] if done.stderr.strip() else "tshark could not write the file")
         shutil.copyfile(dst, out)
@@ -299,13 +302,23 @@ def _lines(proc, limit):
         yield tail.decode("utf-8", "replace")
 
 
-def packets(path, keylog=None, rsa_key=None, flt=None, binary="tshark", warnings=None, limit=None, workdir=None, seconds=0):
-    """Yield packets as dicts. Non-fatal problems are appended to warnings."""
+def _pump(proc, feed):
+    """Write a capture into tshark. When tshark stops early its exit code says why, so a closed pipe is no error here."""
+    try:
+        with proc.stdin:
+            for chunk in feed():
+                proc.stdin.write(chunk)
+    except (OSError, ValueError):
+        pass
+
+
+def packets(path, keylog=None, rsa_key=None, flt=None, binary="tshark", warnings=None, limit=None, workdir=None, seconds=0, feed=None):
+    """Yield packets as dicts. Non-fatal problems are appended to warnings. With feed, tshark reads the capture that feed() yields from a pipe instead of path."""
     limit = limit or Limit()
     expr = flt.expression() if flt else None
     with tempfile.TemporaryDirectory(prefix="pcap-analyzer-", dir="/tmp") as tmp:
         os.chmod(tmp, 0o700)
-        capture = _private_copy(path, tmp, "capture")
+        capture = "-" if feed else _private_copy(path, tmp, "capture")
         kl = _private_copy(keylog, tmp, "keylog") if keylog else None
         rk = _private_copy(rsa_key, tmp, "rsa.pem") if rsa_key else None
         env = dict(os.environ, LC_ALL="C")
@@ -321,10 +334,14 @@ def packets(path, keylog=None, rsa_key=None, flt=None, binary="tshark", warnings
                         env["TMPDIR"] = tmp
                         data = os.environ.get("WIRESHARK_DATA_DIR")
                         read, write = (*SYSTEM_PATHS, os.path.dirname(os.path.dirname(found)), *([data] if data else [])), (tmp,)
-                proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=errfile, env=env, preexec_fn=_limits(seconds, read, write))
+                proc = subprocess.Popen(cmd, stdin=subprocess.PIPE if feed else subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=errfile, env=env,
+                                        preexec_fn=_limits(seconds, read, write))
             except OSError as e:
                 raise TsharkError(f"tshark could not be started: {e}") from e
             limit.attach(proc)
+            pump = threading.Thread(target=_pump, args=(proc, feed), daemon=True) if feed else None
+            if pump:
+                pump.start()
             count = 0
             with proc.stdout:
                 for line in _lines(proc, limit):
@@ -332,6 +349,8 @@ def packets(path, keylog=None, rsa_key=None, flt=None, binary="tshark", warnings
                     count += 1
                     yield dict(zip(FIELDS, vals))
             code = proc.wait()
+            if pump:
+                pump.join()
             limit.check()
             errfile.seek(0)
             err = errfile.read().strip()

@@ -3,7 +3,7 @@ kind: Ingress
 metadata:
   name: pcap-analyzer
   annotations: # F5 NGINX Ingress Controller, so nginx.org and not nginx.ingress.kubernetes.io
-    nginx.org/client-max-body-size: 110m
+    nginx.org/client-max-body-size: 1100m
     nginx.org/proxy-read-timeout: 300s
     nginx.org/proxy-send-timeout: 300s
 spec:

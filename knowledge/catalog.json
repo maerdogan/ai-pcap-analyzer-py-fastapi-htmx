@@ -475,7 +475,7 @@
   "warnings": {
     "copies_removed": {
       "en": "The same packets were seen more than once, as with tcpdump -i any. Extra copies were removed so that they do not look like retransmissions.",
-      "tr": "Aynı paketler birden çok kez görüldü, bu `tcpdump -i any` ile olur. Yeniden iletim gibi görünmemeleri için fazla kopyalar çıkarıldı."
+      "tr": "Aynı paketler birden çok kez görüldü, bu tcpdump -i any ile olur. Yeniden iletim gibi görünmemeleri için fazla kopyalar çıkarıldı."
     },
     "tunnel_seen": {
       "en": "Traffic is inside a tunnel such as VXLAN or Geneve. The addresses shown are those inside the tunnel, such as pod IPs.",
@@ -504,6 +504,14 @@
     "same_request_on_two_connections": {
       "en": "The same requests appear on two connections, as they do on both sides of a NAT or proxy. Totals count them twice. Filter by one client address to see one side.",
       "tr": "Aynı istekler iki bağlantıda görünüyor; bu, NAT veya proxy'nin iki yanında olur. Toplamlar onları iki kez sayar. Tek tarafı görmek için bir istemci adresine göre filtreleyin."
+    },
+    "nat_views_removed": {
+      "en": "The same connection was seen before and after NAT, such as a Kubernetes Service address and then the pod address. Only the view seen first is counted.",
+      "tr": "Aynı bağlantı NAT'tan önce ve sonra görüldü; örneğin önce Kubernetes Service adresi, sonra pod adresi. Yalnızca ilk görülen hâli sayıldı."
+    },
+    "tls_started_before_capture": {
+      "en": "Some TLS connections started before the capture, so the key log cannot be matched to them. Start the capture before the client connects.",
+      "tr": "Bazı TLS bağlantıları capture'dan önce başlamış, bu yüzden key log onlarla eşleştirilemiyor. Capture'ı istemci bağlanmadan önce başlatın."
     }
   },
   "netscaler_resets": {

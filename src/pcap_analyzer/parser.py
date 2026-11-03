@@ -29,6 +29,7 @@ SEND_AFTER_ACK = 0.01
 TCP_TIMESTAMPS = 12
 SAME_ID_S = 1.0  # tcpdump -i any sees a packet on each interface it crosses, and a shaper can hold it between them
 NO_ID_S = 0.002  # without an IP ID, IPv6 and some stacks, only a very short gap shows a copy
+SYN_COPY_S = 0.5  # Linux sends SYN and SYN-ACK with IP ID 0 and resends them after 1 s, which timestamps can show as a little less
 NO_BODY_METHODS = ("HEAD", "CONNECT")
 NO_BODY_STATUS = (204, 304)
 TRACEPARENT = re.compile(r"[0-9a-f]{2}-([0-9a-f]{32})-[0-9a-f]{16}-[0-9a-f]{2}")
@@ -118,7 +119,7 @@ def preview(raw):
     return None if bad > len(text) * 0.05 else privacy.mask_body(text)
 
 
-@dataclass
+@dataclass(slots=True)
 class Packet:
     frame: int
     t: float
@@ -172,6 +173,22 @@ class Stream:
     no_rtt: set = field(default_factory=set)
     resp_end: int = 0
     req_end: int = 0
+    isn: tuple = (None, None)  # raw sequence numbers of SYN and SYN-ACK, which NAT leaves alone
+    last_syn: float = 0.0
+
+
+def nat_views(views, order):
+    """Connections seen a second time after NAT, as tcpdump -i any on a node sees a Service address and then the pod.
+    views holds (number, SYN time, raw sequence numbers) of each connection, and order sorts those that started together.
+    Returns the numbers of the later views; the view seen first stays."""
+    first, later = {}, set()
+    for sid, t, isn in sorted(views, key=lambda v: (v[1] or 0, order(v[0]))):
+        if t is None or None in isn:
+            continue
+        kept = first.setdefault(isn, (sid, t))
+        if kept[0] != sid and t - kept[1] <= SAME_ID_S:
+            later.add(sid)
+    return later
 
 
 class Builder:
@@ -181,7 +198,7 @@ class Builder:
         self.dns = {}
         self.dns_rows = []
         self.total = self.tcp = self.bytes = self.truncated = self.fragments = self.frag_needed = 0
-        self.copies = self.tunnelled = 0
+        self.copies = self.tunnelled = self.nat_views = 0
         self.t_first = self.t_last = None
 
     def add(self, p):
@@ -238,10 +255,13 @@ class Builder:
             s.zero_windows.append(pk)
         if flags & SYN and not flags & ACK:
             s.syn = s.syn or pk
+            s.last_syn = t
             s.client = src
+            s.isn = (s.isn[0] or to_int(p.get("tcp.seq_raw")), s.isn[1])
         elif flags & SYN and flags & ACK:
             s.synack = s.synack or pk
             s.client = s.client or dst
+            s.isn = (s.isn[0], s.isn[1] or to_int(p.get("tcp.seq_raw")))
         elif s.synack and not s.hs_ack and flags & ACK and src == s.client:
             s.hs_ack = pk
         mss = to_int(p.get("tcp.options.mss_val"))
@@ -267,9 +287,9 @@ class Builder:
         key = (src, p.get("tcp.seq"), p.get("tcp.ack"), flags, payload, ip_id)
         before = s.seen.get(key)
         s.seen[key] = t
-        window = SAME_ID_S if to_int(ip_id) or flags & SYN else NO_ID_S  # Linux sends SYN-ACK with IP ID 0, and retries it after 1 s at the earliest
+        window = SAME_ID_S if to_int(ip_id) else SYN_COPY_S if flags & SYN else NO_ID_S
         if before is not None and t - before <= window:
-            return True
+            return not (flags & SYN and flags & ACK and s.last_syn > before)  # a SYN sent again since gets its own answer
         return Builder._is_resegmented(p, s, t, src, payload, ip_id)
 
     @staticmethod

@@ -94,7 +94,7 @@ def test_workflows_pin_actions_and_keep_write_rights_on_one_job():
 
 def test_compose_limits_cpu_memory_and_processes():
     text = (ROOT / "docker/compose.yaml").read_text()
-    for line in ("cpus: 2", "mem_limit: 2g", "pids_limit: 256", "/tmp:size=1g", "read_only: true"):
+    for line in ("cpus: 2", "mem_limit: 4g", "pids_limit: 256", "/tmp:size=3g", "read_only: true"):
         assert line in text
 
 
@@ -126,3 +126,47 @@ def test_issue_templates_warn_about_captures():
 def test_collect_script_parses():
     subprocess.run(["bash", "-n", ROOT / "tools/pcap-collect.sh"], check=True)
     assert subprocess.run([ROOT / "tools/pcap-collect.sh"], capture_output=True).returncode == 2
+
+
+FAKE_KUBECTL = """#!/bin/sh
+echo "$@" >> "$LOG"
+case $1 in
+  debug) while [ "$1" != "--" ]; do shift; done; shift; [ "$1" = sh ] && [ "$2" = -c ] || exit 9
+         cat "$PCAP"; [ -z "$HOLD" ] || exec sleep 30 ;;
+  get) echo pod/node-debugger-n1-abcde ;;
+esac
+"""
+
+
+def _collect(tmp_path, samples, *args, **env):
+    kubectl = tmp_path / "kubectl"
+    kubectl.write_text(FAKE_KUBECTL)
+    kubectl.chmod(0o755)
+    env = dict(os.environ, KUBECTL=str(kubectl), LOG=str(tmp_path / "log"), PCAP=str(samples / "split_headers.pcap"), ATTACH_S="0", **env)
+    cmd = [ROOT / "tools/pcap-collect.sh", "--keep", tmp_path / "keep", "--seconds", "20", "--from", "pod:ns/p", "--from", "node:n1", *args]
+    return subprocess.Popen(cmd, cwd=tmp_path, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+
+
+def test_collect_from_pod_and_node(tmp_path, samples):
+    p = _collect(tmp_path, samples)
+    _, err = p.communicate(timeout=30)
+    assert p.returncode == 0, err
+    want = (samples / "split_headers.pcap").read_bytes()
+    assert [(f.name, f.read_bytes() == want) for f in sorted((tmp_path / "keep").iterdir())] == [("0-pod_ns_p.pcap", True), ("1-node_n1.pcap", True)]
+    log = (tmp_path / "log").read_text()
+    assert "--profile=netadmin" in log and "delete pod/node-debugger-n1-abcde" in log.replace("--wait=false ", "")
+
+
+def test_collect_keeps_the_capture_on_ctrl_c(tmp_path, samples):
+    p = _collect(tmp_path, samples, HOLD="1")
+    time.sleep(2)
+    p.send_signal(2)
+    _, err = p.communicate(timeout=15)
+    assert p.returncode == 0 and "stopped early" in err, err
+    assert len(list((tmp_path / "keep").iterdir())) == 2
+
+
+def test_collect_keeps_the_capture_when_upload_fails(tmp_path, samples):
+    p = _collect(tmp_path, samples, "--url", "http://127.0.0.1:9", PCAP_ANALYZER_TOKEN="x")
+    _, err = p.communicate(timeout=30)
+    assert p.returncode == 1 and err.count("upload failed") == 2, err

@@ -13,21 +13,21 @@ Each [release](https://github.com/maerdogan/ai-pcap-analyzer-py-fastapi-htmx/rel
 From the registry:
 
 ```bash
-docker pull ghcr.io/maerdogan/ai-pcap-analyzer-py-fastapi-htmx:0.4.1
-docker tag ghcr.io/maerdogan/ai-pcap-analyzer-py-fastapi-htmx:0.4.1 pcap-analyzer:0.4.1
+docker pull ghcr.io/maerdogan/ai-pcap-analyzer-py-fastapi-htmx:0.6.0
+docker tag ghcr.io/maerdogan/ai-pcap-analyzer-py-fastapi-htmx:0.6.0 pcap-analyzer:0.6.0
 ```
 
 From the release files, copied to the host:
 
 ```bash
 sha256sum --check --ignore-missing SHA256SUMS
-gunzip -c pcap-analyzer-0.4.1-image-amd64.tar.gz | docker load
+gunzip -c pcap-analyzer-0.6.0-image-amd64.tar.gz | docker load
 ```
 
 Or build it yourself:
 
 ```bash
-docker build -f docker/Containerfile -t pcap-analyzer:0.4.1 .
+docker build -f docker/Containerfile -t pcap-analyzer:0.6.0 .
 ```
 
 Then create the settings and a password hash:
@@ -35,7 +35,7 @@ Then create the settings and a password hash:
 ```bash
 cd docker
 cp .env.example .env
-docker run --rm -it pcap-analyzer:0.4.1 pcap-analyzer hash-password
+docker run --rm -it pcap-analyzer:0.6.0 pcap-analyzer hash-password
 ```
 
 Put the hash in `.env` in single quotes, as `PCAP_ANALYZER_ADMIN_PASSWORD_HASH='...'`, and start it:
@@ -46,14 +46,14 @@ docker compose up -d --no-build
 
 Compose publishes port 8000 on localhost only, so put an HTTPS proxy in front of it. Set `PCAP_ANALYZER_PORT` in `.env` to use another port. To serve HTTPS directly, mount a certificate, add `--cert` and `--key` to the command, and set `PCAP_ANALYZER_BEHIND_PROXY=0`.
 
-Compose limits the app to 2 CPUs, 2 GiB of memory, 256 processes and 1 GiB in `/tmp`. A 100 MB capture peaked near 600 MiB, so raise the limits only if you raise `PCAP_ANALYZER_MAX_SIZE_MB` or `PCAP_ANALYZER_MAX_JOBS`.
+Compose limits the app to 2 CPUs, 4 GiB of memory, 256 processes and 3 GiB in `/tmp`. `/tmp` is memory there, and an upload waits in it. Captures over 100 MB are read in parts of whole connections, so a 1 GB capture peaked near 700 MiB and took under 3 minutes. One very large connection is never split, so a capture that is mostly one connection still needs memory in proportion to its size. Raise the limits if you raise `PCAP_ANALYZER_MAX_JOBS`.
 
 ## Kubernetes
 
 Push the image to your internal registry, then set the image and host names in `kubernetes/generic/`. Create the password hash on any machine with the image:
 
 ```bash
-docker run --rm -it pcap-analyzer:0.4.1 pcap-analyzer hash-password
+docker run --rm -it pcap-analyzer:0.6.0 pcap-analyzer hash-password
 ```
 
 ```bash
@@ -62,7 +62,7 @@ kubectl -n pcap-analyzer create secret generic pcap-analyzer-admin --from-litera
 kubectl apply -k kubernetes/generic
 ```
 
-Keep one replica: sessions and running jobs live in memory. The Ingress annotations assume ingress-nginx. Other controllers need their own upload limit of at least 110 MB. `kubernetes/vks` is an example overlay for F5 NGINX Ingress Controller, which uses `nginx.org` annotations.
+Keep one replica: sessions and running jobs live in memory. The Ingress annotations assume ingress-nginx. Other controllers need their own upload limit of at least 1100 MB. `kubernetes/vks` is an example overlay for F5 NGINX Ingress Controller, which uses `nginx.org` annotations.
 
 `kubernetes/generic/networkpolicy.yaml` lets only the namespace `ingress-nginx` reach port 8000, and gives the pod no way out. If your controller runs in another namespace, change the name there, or the app becomes unreachable. It works only where the network plugin enforces policies, and `kubernetes/vks` does not include it.
 
@@ -148,7 +148,7 @@ With a self-signed certificate, add `--cafile cert.pem`. On a server with only `
 | `PCAP_ANALYZER_SANDBOX` | on where possible | `0` stops running tshark in its own namespaces |
 | `PCAP_ANALYZER_TRUSTED_PROXIES` | | Proxy addresses or networks whose forwarded headers are believed, such as `10.0.0.5,10.1.0.0/16`. When empty, all users behind the proxy share one login lockout |
 | `PCAP_ANALYZER_WORKDIR` | `~/.local/share/pcap-analyzer` | Where results are saved |
-| `PCAP_ANALYZER_MAX_SIZE_MB` | `100` | Largest accepted capture |
+| `PCAP_ANALYZER_MAX_SIZE_MB` | `1000` | Largest accepted capture. Captures over 100 MB are read in parts of whole connections |
 | `PCAP_ANALYZER_TTL_DAYS` | `7` | Days results are kept. The server removes older ones every hour |
 | `PCAP_ANALYZER_MAX_JOBS` | `2` | Analyses running at once |
 | `PCAP_ANALYZER_KEEP_CAPTURE` | `1` | Keep the capture for PCAP export, `0` to delete it after analysis |

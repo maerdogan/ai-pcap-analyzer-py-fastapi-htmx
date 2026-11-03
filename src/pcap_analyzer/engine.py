@@ -6,13 +6,12 @@ import re
 import shutil
 import tempfile
 import time
-from collections import Counter
 from dataclasses import astuple, dataclass
 from pathlib import Path
 
-from . import __version__, knowledge, records, store, tshark
+from . import __version__, knowledge, records, split, store, tshark
 from .config import Settings
-from .parser import Builder, finish_stream
+from .parser import Builder, finish_stream, nat_views
 
 
 DNS_WINDOW_S = 5.0
@@ -21,6 +20,8 @@ COMPRESSED_MAGIC = (b"\x28\xb5\x2f\xfd", b"\x04\x22\x4d\x18")  # zstd, lz4
 CHUNK = 1 << 20
 STALE_TMP_S = 6 * 3600
 TMP_PREFIXES = ("pcap-analyzer-", "pcap-upload-", "pcap-export-")
+PART_BYTES = 100 * CHUNK  # a larger capture is read in parts, and one part takes about as much memory as a capture this size
+STREAM_FIELDS = re.compile(r"\b(frame\.number|tcp\.stream)\b")
 
 
 class CaptureTooLarge(Exception):
@@ -104,24 +105,39 @@ def _digest(paths, flt, slow_s):
     return h.hexdigest()[:20]
 
 
-def _warnings(b, conns, txns, keyed, warnings):
+def _facts(db):
+    """What the warnings and the quality report need from the saved connections and requests."""
+    c = db.execute("""SELECT count(*), count(*) FILTER (NOT handshake_seen), count(*) FILTER (close_type IS NULL),
+        count(*) FILTER ((payload_client = 0 AND payload_server = 0) OR one_way), count(*) FILTER (kind = 'TLS'),
+        coalesce(bool_or(offload), false), coalesce(bool_or(kind = 'TLS' AND handshake_seen), false), coalesce(bool_or(kind = 'TLS' AND NOT handshake_seen), false)
+        FROM tcp_connections""").fetchone()
+    events = dict(db.execute("SELECT event, count(*) FROM tcp_events WHERE event IN ('ack_lost_segment', 'lost_segment') GROUP BY event").fetchall())
+    shared = db.execute("""SELECT 1 FROM http_transactions WHERE request_id IS NOT NULL AND request_id <> ''
+        GROUP BY request_id HAVING count(DISTINCT stream) > 1 LIMIT 1""").fetchone()
+    return dict(connections=c[0], started_before=c[1], open_at_end=c[2], one_way=c[3], encrypted=c[4], offload=c[5],
+                tls_handshake_seen=c[6], tls_started_before=c[7], unseen=events.get("ack_lost_segment", 0), gaps=events.get("lost_segment", 0),
+                shared_request_id=bool(shared), transactions=db.execute("SELECT count(*) FROM http_transactions").fetchone()[0])
+
+
+def _warnings(b, facts, keyed, warnings):
     if b.truncated:
         warnings.append("frames_truncated")
     if b.copies:
         warnings.append("copies_removed")
-    seen = {}
-    for x in txns:
-        if x.get("request_id"):
-            seen.setdefault(x["request_id"], set()).add(x["stream"])
-    if any(len(v) > 1 for v in seen.values()):
+    if b.nat_views:
+        warnings.append("nat_views_removed")
+    if facts["shared_request_id"]:
         warnings.append("same_request_on_two_connections")
     if b.tunnelled:
         warnings.append("tunnel_seen")
-    if any(c["offload"] for c in conns):
+    if facts["offload"]:
         warnings.append("offload_suspected")
-    tls_undecrypted = [c for c in conns if c["kind"] == "TLS"]
-    if tls_undecrypted:
-        warnings.append("tls_key_did_not_decrypt" if keyed else "tls_not_decrypted")
+    if not keyed and facts["encrypted"]:
+        warnings.append("tls_not_decrypted")
+    if keyed and facts["tls_handshake_seen"]:
+        warnings.append("tls_key_did_not_decrypt")
+    if keyed and facts["tls_started_before"]:
+        warnings.append("tls_started_before_capture")  # its keys cannot be matched without the handshake
     return sorted(set(warnings))
 
 
@@ -147,13 +163,10 @@ def _attach_packet_size(b, txns):
         x["max_packet"] = max((p.size for p in s.packets if x["req_frame"] <= p.frame <= hi), default=0)
 
 
-def _quality(b, conns):
+def _quality(b, facts):
     """Counts that show how far this capture can be trusted. Levels and wording come later, from the reports."""
-    events = Counter(e[4] for e in b.events)
-    return dict(tcp_packets=b.tcp, connections=len(conns), unseen=events["ack_lost_segment"], gaps=events["lost_segment"], snapped=b.truncated, copies=b.copies,
-                started_before=sum(not c["handshake_seen"] for c in conns), open_at_end=sum(not c["close_type"] for c in conns),
-                one_way=sum(not (c["payload_client"] or c["payload_server"]) or c["one_way"] for c in conns),
-                encrypted=sum(c["kind"] == "TLS" for c in conns))
+    return dict(tcp_packets=b.tcp, connections=facts["connections"], unseen=facts["unseen"], gaps=facts["gaps"], snapped=b.truncated, copies=b.copies,
+                started_before=facts["started_before"], open_at_end=facts["open_at_end"], one_way=facts["one_way"], encrypted=facts["encrypted"])
 
 
 def analyze(path, keylog=None, rsa_key=None, flt=None, settings=None, use_cached=True, display_name=None, limit=None):
@@ -188,36 +201,95 @@ def _run(path, keylog, rsa_key, flt, settings, use_cached, display_name, limit):
 
     started = time.monotonic()
     warnings = []
-    b = Builder()
-    for p in tshark.packets(path, keylog, rsa_key, flt, settings.tshark, warnings, limit, settings.workdir, settings.analysis_timeout_s):
-        b.add(p)
-    conns, txns = [], []
-    for s in b.streams.values():
-        limit.check()
-        c, t = finish_stream(s, slow_s)
-        conns.append(c)
-        txns += t
-    txns.sort(key=lambda x: x["req_start"])
-    _attach_dns(txns, b.dns_rows)
-    _attach_packet_size(b, txns)
-
+    run = lambda feed=None: tshark.packets(path, keylog, rsa_key, flt, settings.tshark, warnings, limit, settings.workdir, settings.analysis_timeout_s, feed)
     settings.workdir.mkdir(parents=True, exist_ok=True)
     tmp = Path(tempfile.mkdtemp(prefix=".tmp-", dir=settings.workdir))
     try:
-        return _save(tmp, out, aid, path, keylog, rsa_key, flt, settings, display_name, ts_version, started, warnings, b, conns, txns, limit, slow_s)
+        writer = store.Writer(tmp / "analysis.duckdb")
+        b, views = Builder(), []
+        if path.stat().st_size > PART_BYTES:
+            number, parts = _read_in_parts(path, flt, run, b, writer, views, limit, slow_s, warnings)
+        else:
+            for p in run():
+                b.add(p)
+            _flush(b, writer, views, limit, slow_s)
+            dropped = nat_views(views, lambda sid: sid)
+            number, parts = {sid: sid for sid, _, _ in views if sid not in dropped}, 0
+            b.nat_views = len(dropped)
+        limit.check()
+        writer.close(number, b.dns_rows, lambda txns: _attach_dns(txns, b.dns_rows))
+        limit.check()
+        return _save(tmp, out, aid, path, keylog, rsa_key, flt, settings, display_name, ts_version, started, warnings, b, parts, slow_s)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
 
-def _save(tmp, out, aid, path, keylog, rsa_key, flt, settings, display_name, ts_version, started, warnings, b, conns, txns, limit, slow_s):
-    store.write(tmp / "analysis.duckdb", conns, txns, b.events, b.dns_rows)
-    limit.check()
+def _flush(b, writer, views, limit, slow_s, part=None, offset=0):
+    """Finish the connections read so far, hand them to the writer and forget their packets."""
+    conns, txns = [], []
+    for s in b.streams.values():
+        limit.check()
+        c, t = finish_stream(s, slow_s)
+        if part is not None:
+            c.update(part=part, part_stream=c["stream"] - offset)
+        conns.append(c)
+        txns += t
+        views.append((s.sid, s.syn.t if s.syn else None, s.isn))
+    _attach_packet_size(b, txns)
+    writer.add(conns, txns, b.events)
+    b.streams.clear()
+    b.events.clear()
+
+
+def _read_in_parts(path, flt, run, b, writer, views, limit, slow_s, warnings):
+    """Analyze a large capture in parts of whole connections, so memory stays near that of one part.
+    Frame and connection numbers are turned back into those of the whole capture, the way Wireshark counts them."""
+    if flt.display and STREAM_FIELDS.search(flt.display):
+        raise tshark.TsharkError(knowledge.t("Captures over {n} MB are read in parts, so a display filter cannot use frame.number or tcp.stream. Filter by address, port or time instead.", n=PART_BYTES // CHUNK))
+    try:
+        plan = split.plan(path, -(-path.stat().st_size // PART_BYTES))
+    except split.Unsupported as e:
+        raise tshark.TsharkError(knowledge.t("Captures over {n} MB must be pcap or pcapng files.", n=PART_BYTES // CHUNK)) from e
+    if plan.truncated:
+        warnings.append("capture_truncated")
+    first_frame = {}  # first frame of every connection, by its number while reading
+    for k, part in enumerate(plan.parts):
+        offset = max(first_frame, default=-1) + 1
+        for p in run(lambda k=k: split.feed(path, plan, k)):
+            _to_whole(p, part.frames, offset, first_frame)
+            b.add(p)
+        _flush(b, writer, views, limit, slow_s, k, offset)
+    dropped = nat_views(views, first_frame.get)
+    b.nat_views = len(dropped)
+    order = sorted(first_frame, key=first_frame.get)
+    return {sid: i for i, sid in enumerate(order) if sid not in dropped}, len(plan.parts)
+
+
+def _to_whole(p, frames, offset, first_frame):
+    """Frame and connection numbers of one part, as numbers of the whole capture."""
+    whole = frames[int(p["frame.number"]) - 1]
+    p["frame.number"] = str(whole)
+    if p.get("tcp.analysis.acks_frame"):
+        p["tcp.analysis.acks_frame"] = str(frames[int(p["tcp.analysis.acks_frame"]) - 1])
+    for key in ("tcp.segment", "tls.segment"):
+        if p.get(key):
+            p[key] = tshark.AGG.join(str(frames[int(x) - 1]) for x in p[key].split(tshark.AGG))
+    if p.get("tcp.stream"):
+        sids = [int(x) + offset for x in p["tcp.stream"].split(tshark.AGG)]
+        for sid in sids:
+            first_frame.setdefault(sid, whole)
+        p["tcp.stream"] = tshark.AGG.join(map(str, sids))
+
+
+def _save(tmp, out, aid, path, keylog, rsa_key, flt, settings, display_name, ts_version, started, warnings, b, parts, slow_s):
+    with store.connect(tmp / "analysis.duckdb") as db:
+        facts = _facts(db)
     meta = dict(
         id=aid, filename=display_name or path.name, size=path.stat().st_size, created=time.time(), tshark=ts_version, version=__version__,
         decryption="keylog" if keylog else "rsa_key" if rsa_key else None, filter=flt.expression(),
-        packets=b.total, tcp_packets=b.tcp, bytes=b.bytes, connections=len(conns), transactions=len(txns),
+        packets=b.total, tcp_packets=b.tcp, bytes=b.bytes, connections=facts["connections"], transactions=facts["transactions"],
         ip_fragments=b.fragments, frag_needed=b.frag_needed, copies=b.copies, tunnelled=b.tunnelled, capture_start=b.t_first, capture_end=b.t_last, duration_s=round(time.monotonic() - started, 3), slow_s=slow_s,
-        quality=_quality(b, conns), warnings=_warnings(b, conns, txns, bool(keylog or rsa_key), warnings))
+        quality=_quality(b, facts), warnings=_warnings(b, facts, bool(keylog or rsa_key), warnings), parts=parts)
     if settings.keep_capture:
         shutil.copyfile(path, tmp / "capture")
         (tmp / "capture").chmod(0o600)

@@ -124,6 +124,13 @@ def test_gzip_upload_is_analyzed(client, samples, tmp_path):
     assert upload(client, p).startswith("/a/")
 
 
+def test_nat_warning_is_shown(client, samples):
+    page = client.get(upload(client, samples / "node_nat.pcap")).text
+    assert "seen before and after NAT" in page
+    client.post("/language", data={"language": "tr"})
+    assert "NAT&#39;tan önce ve sonra" in client.get(upload(client, samples / "node_nat.pcap")).text
+
+
 def test_zstd_upload_shows_a_clear_error(client, tmp_path):
     p = tmp_path / "c.pcap.zst"
     p.write_bytes(b"\x28\xb5\x2f\xfd" + bytes(40))

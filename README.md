@@ -4,6 +4,10 @@ Find out why HTTP requests are slow, from a packet capture.
 
 Upload a PCAP and see where the time went: connection setup, network delay, service time, data transfer, or packet loss. It runs on your own server, needs no internet access, and is designed for captures taken on either side of a load balancer such as NetScaler.
 
+![Overview of a capture: successful and failed requests, traffic over time, where the time went and the slowest requests](docs/images/overview.jpg)
+
+![Upload page with earlier captures, the capture file, extra parts, HTTPS keys and filters](docs/images/upload.jpg)
+
 > [!WARNING]
 > Do not expose this application to the internet. It is built for private networks, has had no independent security review, and leaves several protections to you. Read [Security](#security) before you deploy it.
 
@@ -21,12 +25,13 @@ Upload a PCAP and see where the time went: connection setup, network delay, serv
 - Export to CSV, Excel, JSON, PNG, SVG, HTML, HAR and PCAP
 - TLS view without a key: versions, ciphers, failed handshakes and certificate end dates
 - WebSocket and gRPC handling, gzip captures and captures in several parts
+- Captures up to 1 GB, read in parts of whole connections so memory stays near 700 MiB
 - Limits per URL, a baseline capture, trends across captures, case notes and an activity log
 - REST API with tokens ([docs/api.md](docs/api.md)), and `pcap-analyzer check` for CI
 
 See the [usage guide](docs/usage.md).
 
-> **Status: early release.** Tested with synthetic captures on tshark 4.4 and 4.6, with real Linux traffic in a network namespace lab (`tools/lab.py`), and in a Kubernetes pod behind an NGINX Ingress. Compose, systemd and the Linux folder are installed and walked through from start to finish by `tools/check_install.sh`. It has not yet been tested with captures from a production network.
+> **Status: early release.** Tested with synthetic captures on tshark 4.4 and 4.6, with real Linux traffic in a network namespace lab (`tools/lab.py`), and with captures from a Kubernetes node, a pod and an NGINX Ingress pod, compared with tshark and the client's own timings. Read in parts, all of these captures give the same results as in one pass, and a generated 1 GB capture was analyzed in under 3 minutes. Compose, systemd and the Linux folder are installed and walked through from start to finish by `tools/check_install.sh`. It has not yet been tested with captures from a production network.
 
 ## Quick start
 
@@ -121,7 +126,7 @@ flowchart TD
 
 - Make sure you may capture and analyze this traffic. Captures can hold personal data, so your privacy rules apply, such as KVKK or GDPR.
 - Treat a TLS key log like a password, because it decrypts every session it covers. Delete it after use. The app removes its copy after analysis. If a process is killed, the hourly cleanup removes the copy within 7 hours.
-- Decompress captures first. Compressed files are refused, because their real size cannot be checked.
+- gzip captures are unpacked up to the size limit. zstd and lz4 files are refused, because their real size cannot be checked.
 - Never commit captures or keys, and never attach them to public issues.
 - `kubernetes/vks` is an example from one private lab. Do not reuse its addresses, and replace its self-signed certificate.
 

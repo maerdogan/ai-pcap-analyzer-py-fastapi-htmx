@@ -10,7 +10,9 @@ Open **Capture guide**, fill in the server address and port, and copy the comman
 
 ## 2. Upload it
 
-On **Captures**, choose the file. gzip files and several parts of one capture work too, up to 100 MB after unpacking. To read HTTPS, add a TLS key log under **Decrypt HTTPS**.
+On **Captures**, choose the file. gzip files and several parts of one capture work too, up to 1000 MB after unpacking. To read HTTPS, add a TLS key log under **Decrypt HTTPS**.
+
+![Upload page](images/upload.jpg)
 
 ## 3. Read the overview
 

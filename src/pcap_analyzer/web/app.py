@@ -13,11 +13,11 @@ from pathlib import Path
 
 import jinja2
 from fastapi import Depends, FastAPI, Form, HTTPException, Request, UploadFile
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from .. import __version__, capture_guide, compare, engine, exports, knowledge, records, reports, tshark
+from .. import __version__, capture_guide, compare, engine, exports, knowledge, records, reports, split, tshark
 from ..config import Settings
 from . import saved
 from .auth import Auth
@@ -585,9 +585,8 @@ def create_app(settings=None, https=False):
     def export_har(request: Request, aid: str):
         a = opened(aid)
         log(request, "export", f"{aid} har")
-        with a.connect() as db:
-            body = exports.har(db, inspect_filter(dict(request.query_params)))
-        return Response(body, media_type="application/json", headers=_attachment(a, "requests.har"))
+        flt = inspect_filter(dict(request.query_params))
+        return StreamingResponse(_streamed(a, lambda db: exports.har_chunks(db, flt)), media_type="application/json", headers=_attachment(a, "requests.har"))
 
     @app.get("/export/{aid}/{name}.{fmt}")
     def export_table(request: Request, aid: str, name: str, fmt: str):
@@ -595,9 +594,8 @@ def create_app(settings=None, https=False):
         log(request, "export", f"{aid} {name}.{fmt}")
         if name not in exports.TABLES or fmt not in exports.FORMATS:
             _bad(knowledge.t("This export does not exist."), 404)
-        with a.connect() as db:
-            body = exports.render(exports.table(db, name, a.meta), fmt)
-        return Response(body, media_type=exports.FORMATS[fmt], headers=_attachment(a, f"{name}.{fmt}"))
+        return StreamingResponse(_streamed(a, lambda db: exports.render_chunks(exports.each_row(db, name, a.meta), fmt)), media_type=exports.FORMATS[fmt],
+                                 headers=_attachment(a, f"{name}.{fmt}"))
 
     @app.get("/export/{aid}/conn/{stream}.pcapng")
     def export_stream(request: Request, aid: str, stream: int):
@@ -609,10 +607,15 @@ def create_app(settings=None, https=False):
         with a.connect() as db:
             if not reports.one(db, "SELECT stream FROM tcp_connections WHERE stream = ?", [stream]):
                 _bad(knowledge.t("This connection does not exist."), 404)
+            where = reports.one(db, "SELECT part, part_stream FROM stream_parts WHERE stream = ?", [stream]) if a.meta.get("parts") else None
+        feed, number = None, stream
+        if where:  # a capture read in parts: only the part that holds this connection goes through tshark
+            plan = split.plan(capture, a.meta["parts"])
+            feed, number = (lambda: split.feed(capture, plan, where["part"])), where["part_stream"]
         with tempfile.TemporaryDirectory(prefix="pcap-export-", dir="/tmp") as tmp:
             out = Path(tmp) / "out.pcapng"
             try:
-                tshark.extract_stream(capture, stream, out, settings.tshark)
+                tshark.extract_stream(capture, number, out, settings.tshark, feed)
             except tshark.TsharkError as e:
                 _bad(str(e), 500)
             body = out.read_bytes()
@@ -648,6 +651,12 @@ def create_app(settings=None, https=False):
         return data
 
     return app
+
+
+def _streamed(a, make):
+    """An export written while it is read from the database, so a large analysis does not sit in memory."""
+    with a.connect() as db:
+        yield from make(db)
 
 
 def _attachment(a, name):

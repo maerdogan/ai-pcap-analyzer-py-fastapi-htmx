@@ -11,7 +11,7 @@ def _default_workdir():
 @dataclass
 class Settings:
     workdir: Path = field(default_factory=lambda: Path(os.environ.get("PCAP_ANALYZER_WORKDIR", _default_workdir())))
-    max_size_mb: int = field(default_factory=lambda: int(os.environ.get("PCAP_ANALYZER_MAX_SIZE_MB", "100")))
+    max_size_mb: int = field(default_factory=lambda: int(os.environ.get("PCAP_ANALYZER_MAX_SIZE_MB", "1000")))
     ttl_days: int = field(default_factory=lambda: int(os.environ.get("PCAP_ANALYZER_TTL_DAYS", "7")))
     tshark: str = field(default_factory=lambda: os.environ.get("PCAP_ANALYZER_TSHARK", "tshark"))
     keep_capture: bool = field(default_factory=lambda: os.environ.get("PCAP_ANALYZER_KEEP_CAPTURE", "1") != "0")

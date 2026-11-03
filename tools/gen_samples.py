@@ -503,6 +503,22 @@ def gen_split(out, truth):
     truth["split_headers.pcap"] = dict(requests=3)
 
 
+def gen_nat(out, truth):
+    """tcpdump -i any on a Kubernetes node: each packet to a Service address shows again after DNAT, with the pod address."""
+    w = PcapWriter(out / "node_nat.pcap")
+    for i in range(2):
+        outer = Conn(w, "10.70.0.1", 54000 + i, "10.96.0.10", 80)
+        inner = Conn(w, "10.70.0.1", 54000 + i, "10.244.0.5", 8080)
+        inner.seq = dict(outer.seq)
+        for c, lag in ((outer, 0), (inner, 0.00005)):
+            t = c.handshake(T0 + i + lag)
+            for j in range(3):
+                t = txn(c, t + 0.01, req("GET", f"/nat/{i}/{j}"), resp(200, b"ok"), 0.03)
+            c.close(t + 0.01)
+    w.close()
+    truth["node_nat.pcap"] = dict(transactions=6, server="10.96.0.10")
+
+
 def gen_perf(out, certdir, truth):
     target = 100 * 1024 * 1024
     for name, use_tls in (("perf_http_100mb.pcap", False), ("perf_https_100mb.pcap", True)):
@@ -553,6 +569,7 @@ def main():
     gen_backends(out, truth)
     gen_poor(out, truth)
     gen_split(out, truth)
+    gen_nat(out, truth)
     if "--perf" in sys.argv:
         gen_perf(out, out, truth)
     (out / "truth.json").write_text(json.dumps(truth, indent=2))

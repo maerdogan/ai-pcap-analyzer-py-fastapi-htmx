@@ -708,5 +708,9 @@
   "ClientHello unanswered": "ClientHello unbeantwortet",
   "Certificate expires": "Zertifikat läuft ab",
   "gRPC message": "gRPC-Meldung",
-  "The same requests appear on two connections, as they do on both sides of a NAT or proxy. Totals count them twice. Filter by one client address to see one side.": "Dieselben Anfragen erscheinen auf zwei Verbindungen, wie auf beiden Seiten eines NAT oder Proxys. Summen zählen sie doppelt. Filtern Sie nach einer Client-Adresse, um eine Seite zu sehen."
+  "The same requests appear on two connections, as they do on both sides of a NAT or proxy. Totals count them twice. Filter by one client address to see one side.": "Dieselben Anfragen erscheinen auf zwei Verbindungen, wie auf beiden Seiten eines NAT oder Proxys. Summen zählen sie doppelt. Filtern Sie nach einer Client-Adresse, um eine Seite zu sehen.",
+  "The same connection was seen before and after NAT, such as a Kubernetes Service address and then the pod address. Only the view seen first is counted.": "Dieselbe Verbindung wurde vor und nach NAT gesehen, etwa zuerst mit der Adresse eines Kubernetes-Service und dann mit der Pod-Adresse. Nur die zuerst gesehene Ansicht wird gezählt.",
+  "Some TLS connections started before the capture, so the key log cannot be matched to them. Start the capture before the client connects.": "Einige TLS-Verbindungen begannen vor dem Mitschnitt, daher lässt sich die Key-Log-Datei ihnen nicht zuordnen. Starten Sie den Mitschnitt, bevor der Client sich verbindet.",
+  "Captures over {n} MB are read in parts, so a display filter cannot use frame.number or tcp.stream. Filter by address, port or time instead.": "Mitschnitte über {n} MB werden in Teilen gelesen, daher kann ein Anzeigefilter frame.number oder tcp.stream nicht verwenden. Filtern Sie stattdessen nach Adresse, Port oder Zeit.",
+  "Captures over {n} MB must be pcap or pcapng files.": "Mitschnitte über {n} MB müssen pcap- oder pcapng-Dateien sein."
 }

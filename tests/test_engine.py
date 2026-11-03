@@ -385,3 +385,21 @@ def test_parts_join_without_mergecap(samples, settings, tmp_path):
     got = engine.analyze(joined, settings=settings, display_name="both")
     each = [engine.analyze(p, settings=settings).meta["packets"] for p in (a, b)]
     assert got.meta["packets"] == sum(each)
+
+
+def test_a_syn_resent_after_a_second_is_not_a_copy():
+    """Linux sends a SYN with IP ID 0 and resends it after 1 s. A timestamp can show that gap as a little under 1 s."""
+    s = parser.Stream(1, ("10.0.0.1", 40000), ("10.0.0.2", 80))
+    syn = {"ip.id": "0x0000", "tcp.seq": "0", "tcp.ack": "0"}
+    assert not parser.Builder._is_copy(syn, s, 100.0, s.a, parser.SYN, 0)
+    assert parser.Builder._is_copy(syn, s, 100.00002, s.a, parser.SYN, 0)  # the same SYN on a second interface
+    assert not parser.Builder._is_copy(syn, s, 100.99998, s.a, parser.SYN, 0)
+
+
+def test_a_syn_ack_that_answers_a_resent_syn_is_not_a_copy():
+    s = parser.Stream(1, ("10.0.0.1", 40000), ("10.0.0.2", 80))
+    synack = {"ip.id": "0x0000", "tcp.seq": "0", "tcp.ack": "1"}
+    assert not parser.Builder._is_copy(synack, s, 100.0, s.b, parser.SYN | parser.ACK, 0)
+    assert parser.Builder._is_copy(synack, s, 100.00002, s.b, parser.SYN | parser.ACK, 0)  # the same answer on a second interface
+    s.last_syn = 100.00004  # the client did not see it and sent its SYN again
+    assert not parser.Builder._is_copy(synack, s, 100.01, s.b, parser.SYN | parser.ACK, 0)

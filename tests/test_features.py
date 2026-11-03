@@ -4,6 +4,7 @@ import stat
 import subprocess
 import threading
 import time
+import types
 
 import pytest
 
@@ -76,6 +77,21 @@ def test_long_headers_and_a_separate_body(samples, settings):
     with a.connect() as db:
         got = db.execute("SELECT uri, status, answered, truncated FROM http_transactions ORDER BY req_start").fetchall()
     assert got == [(f"/long/{i}", 200, True, False) for i in range(3)]
+
+
+def test_node_capture_counts_a_nat_connection_once(samples, settings, truth):
+    a = engine.analyze(samples / "node_nat.pcap", settings=settings)
+    assert a.meta["transactions"] == truth["node_nat.pcap"]["transactions"]
+    assert "nat_views_removed" in a.meta["warnings"]
+    with a.connect() as db:
+        assert db.execute("SELECT DISTINCT server_ip FROM tcp_connections").fetchall() == [(truth["node_nat.pcap"]["server"],)]
+
+
+@pytest.mark.parametrize("handshake, expected", [(True, "tls_key_did_not_decrypt"), (False, "tls_started_before_capture")])
+def test_tls_warning_names_why_a_key_did_not_work(handshake, expected):
+    b = types.SimpleNamespace(truncated=0, copies=0, nat_views=0, tunnelled=0)
+    facts = dict(shared_request_id=False, offload=False, encrypted=1, tls_handshake_seen=handshake, tls_started_before=not handshake)
+    assert engine._warnings(b, facts, True, []) == [expected]
 
 
 def _hanging_tshark(tmp_path):

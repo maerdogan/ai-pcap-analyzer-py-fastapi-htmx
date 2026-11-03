@@ -2,7 +2,9 @@
 import csv
 import datetime
 import io
+import itertools
 import json
+import textwrap
 
 from openpyxl import Workbook
 
@@ -17,8 +19,13 @@ FORMATS = {"csv": "text/csv; charset=utf-8", "json": "application/json",
 
 
 def table(db, name, meta):
+    return list(each_row(db, name, meta))
+
+
+def each_row(db, name, meta):
+    """Rows of one table. Requests come one batch at a time, since a large capture has many."""
     if name == "requests":
-        return reports.rows(db, f"SELECT {REQUEST_COLUMNS} FROM http_transactions ORDER BY req_start")
+        return reports.each_row(db, f"SELECT {REQUEST_COLUMNS} FROM http_transactions ORDER BY req_start")
     if name == "urls":
         got = reports.url_groups(db)
         for g in got:
@@ -65,11 +72,19 @@ def _entry(t):
 
 
 def har(db, flt=None):
-    """Requests as a HAR 1.2 file. Headers and URLs are the masked ones, so secrets stay out of it here too."""
+    return b"".join(har_chunks(db, flt))
+
+
+def har_chunks(db, flt=None):
+    """Requests as a HAR 1.2 file, written one request at a time. Headers and URLs are the masked ones, so secrets stay out of it here too."""
     tw, tp = reports.txn_where(flt or reports.Inspect())
-    rows = reports.rows(db, f"""SELECT t.*, c.kind, c.server_ip FROM http_transactions t JOIN tcp_connections c USING (stream)
+    rows = reports.each_row(db, f"""SELECT t.*, c.kind, c.server_ip FROM http_transactions t JOIN tcp_connections c USING (stream)
         {"WHERE " + tw if tw else ""} ORDER BY t.req_start""", tp)
-    return json.dumps(dict(log=dict(version="1.2", creator=dict(name="pcap-analyzer", version=__version__), entries=[_entry(t) for t in rows])), indent=1).encode()
+    head = json.dumps(dict(version="1.2", creator=dict(name="pcap-analyzer", version=__version__)))[:-1]  # left open for the entries
+    yield f'{{"log": {head}, "entries": ['.encode()
+    for i, t in enumerate(rows):
+        yield ((",\n" if i else "\n") + json.dumps(_entry(t))).encode()
+    yield b"\n]}}\n"
 
 
 def _safe(v):
@@ -80,23 +95,40 @@ def _safe(v):
 
 
 def render(rows, fmt):
+    return b"".join(render_chunks(rows, fmt))
+
+
+def render_chunks(rows, fmt, batch=2000):
+    """A table as a file, written as the rows come so that a large table never sits in memory twice."""
+    if fmt not in FORMATS:
+        raise ValueError(fmt)
+    rows = iter(rows)
+    head = next(rows, None)
+    cols = list(head) if head else []
+    rows = itertools.chain([head], rows) if head else iter(())
     if fmt == "json":
-        return json.dumps(rows, indent=2, default=str).encode()
-    cols = list(rows[0]) if rows else []
-    if fmt == "csv":
+        yield b"["
+        for i, r in enumerate(rows):
+            yield (("," if i else "") + "\n" + textwrap.indent(json.dumps(r, indent=2, default=str), "  ")).encode()
+        yield b"\n]" if head else b"]"
+    elif fmt == "csv":
+        yield "\ufeff".encode()  # BOM so Excel reads UTF-8
         out = io.StringIO()
         w = csv.writer(out)
         w.writerow([knowledge.column(c) for c in cols])
-        for r in rows:
+        for i, r in enumerate(rows, 1):
             w.writerow([_safe(r[c]) for c in cols])
-        return ("﻿" + out.getvalue()).encode()  # BOM so Excel reads UTF-8
-    if fmt == "xlsx":
-        wb = Workbook()
-        ws = wb.active
+            if i % batch == 0:
+                yield out.getvalue().encode()
+                out.seek(0)
+                out.truncate()
+        yield out.getvalue().encode()
+    else:
+        wb = Workbook(write_only=True)  # rows go to a temporary file instead of staying in memory
+        ws = wb.create_sheet("Sheet")
         ws.append([knowledge.column(c) for c in cols])
         for r in rows:
             ws.append([_safe(r[c]) if not isinstance(r[c], (list, dict)) else str(r[c]) for c in cols])
         out = io.BytesIO()
         wb.save(out)
-        return out.getvalue()
-    raise ValueError(fmt)
+        yield out.getvalue()

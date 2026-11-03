@@ -27,7 +27,7 @@ def _tcpdump(interface, bpf, seconds, limit, path=None):
     return f"{cmd} > {shlex.quote(path)}" if path else cmd
 
 
-def commands(server=None, port=None, client=None, seconds=DEFAULT_SECONDS, max_mb=100, interface="any", namespace="default", pod="POD", container="CONTAINER", image=DEFAULT_IMAGE):
+def commands(server=None, port=None, client=None, seconds=DEFAULT_SECONDS, max_mb=1000, interface="any", namespace="default", pod="POD", container="CONTAINER", image=DEFAULT_IMAGE):
     """One entry per capture point, with what it can and cannot show."""
     limit = int(max_mb * 1_000_000 * SAFE_SHARE)
     bpf = _bpf(server, port, client)

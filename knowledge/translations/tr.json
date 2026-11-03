@@ -423,5 +423,8 @@
   "TLS resumed": "TLS sürdürüldü",
   "ClientHello unanswered": "ClientHello cevapsız",
   "Certificate expires": "Sertifika bitişi",
-  "gRPC message": "gRPC mesajı"
+  "gRPC message": "gRPC mesajı",
+  "No response": "Cevap yok",
+  "Captures over {n} MB are read in parts, so a display filter cannot use frame.number or tcp.stream. Filter by address, port or time instead.": "{n} MB'tan büyük capture'lar parça parça okunur, bu yüzden görüntü filtresinde frame.number veya tcp.stream kullanılamaz. Bunun yerine adres, port veya zamana göre filtreleyin.",
+  "Captures over {n} MB must be pcap or pcapng files.": "{n} MB'tan büyük capture'lar pcap veya pcapng dosyası olmalıdır."
 }

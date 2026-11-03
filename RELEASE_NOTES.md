@@ -2,6 +2,30 @@
 
 All changes made on the same day are one minor version.
 
+## 0.6.0 (2026-11-03)
+
+### Added
+
+- Captures up to 1000 MB. One over 100 MB is split into parts of whole connections, found by their innermost addresses also inside VXLAN, Geneve, GRE and IP-in-IP, and each part goes to its own tshark through a pipe. Results, frame numbers and connection numbers are the same as in one pass. A 1 GB capture with 1.6 million packets took under 3 minutes and peaked near 700 MiB.
+- A warning that names TLS connections which started before the capture, since a key log cannot be matched to them.
+- Screenshots of the overview and the upload page in the README.
+
+### Changed
+
+- `PCAP_ANALYZER_MAX_SIZE_MB` defaults to 1000. Ingress upload limits are 1100 MB, `/tmp` holds 3 GiB in Compose and Kubernetes, and Compose allows 4 GiB of memory, because its `/tmp` is memory.
+- Results are written to disk as each part finishes, and CSV, JSON, Excel and HAR downloads are written while they are sent, so memory no longer grows with the number of requests.
+- On captures over 100 MB, a display filter cannot use `frame.number` or `tcp.stream`.
+- `tools/pcap-collect.sh` and the capture guide stop a capture near the new limit.
+
+### Fixed
+
+- On a Kubernetes node with `tcpdump -i any`, a connection seen with the Service address and again with the pod address after NAT is counted once. Before, its requests were counted twice.
+- A key log that decrypted most traffic no longer says the key did not work because of connections that started before the capture.
+- `tools/pcap-collect.sh`: Ctrl-C stops the captures and keeps what they took, and `pod:` and `node:` start tcpdump after kubectl attaches, so the file header is not lost.
+- A SYN-ACK that answers a SYN sent again is no longer taken for a copy from `tcpdump -i any`, so it counts as a retransmission, as in Wireshark.
+- A request without a response shows a dash instead of "None" in its status badge.
+- The Turkish text about removed packet copies no longer shows code quotes.
+
 ## 0.4.1 (2026-11-03)
 
 ### Added

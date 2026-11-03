@@ -7,7 +7,7 @@
 # Sources: local, ssh:[user@]host (needs sudo without a password there, for timeout), pod:namespace/pod and node:name (use kubectl debug).
 set -euo pipefail
 
-URL="" FILTER="tcp" SECONDS_LIMIT=60 MAX_MB=95 IMAGE=nicolaka/netshoot KEEP="" SOURCES=()
+URL="" FILTER="tcp" SECONDS_LIMIT=60 ATTACH_S=${ATTACH_S:-3} MAX_MB=950 IMAGE=nicolaka/netshoot KEEP="" SOURCES=()
 KUBECTL=${KUBECTL:-kubectl}
 while [[ $# -gt 0 ]]; do
   [[ $# -gt 1 ]] || { echo "$1 needs a value" >&2; exit 2; }
@@ -29,6 +29,7 @@ WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
 LIMIT=$((MAX_MB * 1024 * 1024)) RC=0
 TCPDUMP=(timeout "$SECONDS_LIMIT" tcpdump -i any -s 0 -B 32768 -U -w - "$FILTER") # -B: a pipe is slower than a file, a short burst overflows the default ring
+LATE="sleep $ATTACH_S; exec $(printf '%q ' "${TCPDUMP[@]}")" # kubectl attaches after the container starts, and output from before that is lost, with it the file header
 
 capture() { # source, output file. head stops a capture at the size limit.
   case $1 in
@@ -36,19 +37,26 @@ capture() { # source, output file. head stops a capture at the size limit.
     ssh:*) ssh "${1#ssh:}" "sudo $(printf '%q ' "${TCPDUMP[@]}")" ;;
     pod:*)
       local target=${1#pod:}
-      $KUBECTL debug -n "${target%%/*}" "pod/${target#*/}" --image="$IMAGE" --profile=netadmin --attach --quiet -- "${TCPDUMP[@]}" ;;
+      $KUBECTL debug -n "${target%%/*}" "pod/${target#*/}" --image="$IMAGE" --profile=netadmin --attach --quiet -- sh -c "$LATE" ;;
     node:*)
-      $KUBECTL debug "node/${1#node:}" --image="$IMAGE" --profile=sysadmin --attach --quiet -- "${TCPDUMP[@]}" || true
+      $KUBECTL debug "node/${1#node:}" --image="$IMAGE" --profile=sysadmin --attach --quiet -- sh -c "$LATE" || true
       # kubectl leaves this pod behind
       $KUBECTL get pods -o name | grep "/node-debugger-${1#node:}-" | xargs -r $KUBECTL delete --wait=false ;;
     *) echo "unknown source: $1" >&2; return 2 ;;
   esac 2>"$2.err" | head -c "$LIMIT" >"$2" || true
 }
 
+# Each capture runs in its own process group, so Ctrl-C reaches only this script. It stops them and keeps what they took.
+set -m
+PIDS=() STOPPED=0
+stop() { STOPPED=1; for p in "${PIDS[@]}"; do kill -TERM -- "-$p" 2>/dev/null || true; done; }
+trap stop INT TERM
 for i in "${!SOURCES[@]}"; do
   capture "${SOURCES[$i]}" "$WORK/$i.pcap" &
+  PIDS+=($!)
 done
-wait
+while ! wait; do :; done # a trap interrupts wait
+[[ $STOPPED == 0 ]] || echo "stopped early, keeping what was captured. Remote tcpdump ends by itself after --seconds" >&2
 
 for i in "${!SOURCES[@]}"; do
   name=$i-$(printf '%s' "${SOURCES[$i]}" | tr -c 'A-Za-z0-9.-' '_').pcap

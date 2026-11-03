@@ -4,7 +4,7 @@ metadata:
   name: pcap-analyzer
   namespace: pcap-analyzer
   annotations:
-    nginx.ingress.kubernetes.io/proxy-body-size: 110m
+    nginx.ingress.kubernetes.io/proxy-body-size: 1100m
     nginx.ingress.kubernetes.io/proxy-read-timeout: "300"
 spec:
   tls:

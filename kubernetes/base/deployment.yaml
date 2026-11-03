@@ -24,7 +24,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: pcap-analyzer
-          image: registry.example.internal/pcap-analyzer:0.4.1 # your internal registry
+          image: registry.example.internal/pcap-analyzer:0.6.0 # your internal registry
           ports:
             - containerPort: 8000
           env:
@@ -68,4 +68,4 @@ spec:
             claimName: pcap-analyzer-data
         - name: tmp
           emptyDir:
-            sizeLimit: 1Gi
+            sizeLimit: 3Gi  # an upload waits here, unpacked too when it came as gzip

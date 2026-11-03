@@ -32,7 +32,7 @@ PORT = 8080
 NAMESPACES = ["unshare", "-Urnmpf", "--mount-proc", "--kill-child"]  # the PID namespace ends whatever is left
 LOSS_PERCENT = 8
 BODY_BYTES = 300_000
-TWO_SIDES_S, POD_S, NODE_S = 9, 120, 4  # POD_S is only a ceiling, loss can stall one response for many seconds
+TWO_SIDES_S, POD_S, NODE_S = 15, 120, 4  # tcpdump stops at a fixed time, so these leave room for a slow machine. Loss can stall one response for many seconds
 
 
 def run(*cmd, **kw):
@@ -180,6 +180,8 @@ def two_sides(out, truth):
             caps = [Capture(c, "eth0", out / f"front_{name}.pcap", TWO_SIDES_S, "10.70.1.2"), Capture(s, "eth0", out / f"back_{name}.pcap", TWO_SIDES_S, "10.70.2.2")]
             spec = json.dumps(requests(with_id))
             truth[f"two_sides_{name}"] = json.loads(c.sh(*lab("--client", "10.70.1.2", spec)).stdout)
+            if time.monotonic() > min(cap.ends for cap in caps):
+                raise RuntimeError("a capture ended before the client did, so the last requests are missing")
             for cap in caps:
                 cap.stop()
         for app in apps:

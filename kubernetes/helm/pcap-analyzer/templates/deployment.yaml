@@ -67,4 +67,4 @@ spec:
             claimName: {{ .Release.Name }}-data
         - name: tmp
           emptyDir:
-            sizeLimit: 1Gi
+            sizeLimit: 3Gi  # an upload waits here, unpacked too when it came as gzip

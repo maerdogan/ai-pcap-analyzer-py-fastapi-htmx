@@ -33,6 +33,15 @@ def rows(db, sql, params=()):
     return [dict(zip(cols, r)) for r in cur.fetchall()]
 
 
+def each_row(db, sql, params=(), batch=5000):
+    """Like rows, one batch at a time."""
+    cur = db.execute(sql, params)
+    cols = [c[0] for c in cur.description]
+    while chunk := cur.fetchmany(batch):
+        for r in chunk:
+            yield dict(zip(cols, r))
+
+
 def one(db, sql, params=()):
     got = rows(db, sql, params)
     return got[0] if got else None

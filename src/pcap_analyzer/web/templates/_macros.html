@@ -59,7 +59,7 @@
 {% endmacro %}
 
 {% macro status(code) %}
-<span class="status s{{ (code // 100) if code else 0 }}">{{ code or _("None") }}</span>
+{% if code %}<span class="status s{{ code // 100 }}">{{ code }}</span>{% else %}<span class="status s0" title="{{ _("No response") }}" aria-label="{{ _("No response") }}">–</span>{% endif %}
 {% endmacro %}
 
 {% macro waterfall(rows, a, link=True) %}
