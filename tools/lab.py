@@ -32,7 +32,7 @@ PORT = 8080
 NAMESPACES = ["unshare", "-Urnmpf", "--mount-proc", "--kill-child"]  # the PID namespace ends whatever is left
 LOSS_PERCENT = 8
 BODY_BYTES = 300_000
-TWO_SIDES_S, POD_S, NODE_S = 9, 16, 4
+TWO_SIDES_S, POD_S, NODE_S = 9, 120, 4  # POD_S is only a ceiling, loss can stall one response for many seconds
 
 
 def run(*cmd, **kw):
@@ -198,7 +198,7 @@ def lossy(out, truth):
         cap = Capture(s, "eth0", out / "pod.pcap", POD_S, "10.70.3.1")
         spec = json.dumps([(f"/files/big?bytes={BODY_BYTES}", False)] * 6)
         truth["pod"] = json.loads(c.sh(*lab("--client", "10.70.3.2", spec)).stdout)
-        cap.stop()
+        time.sleep(1)  # -U has written every packet, and tcpdump ends with the PID namespace
         app.kill()
     finally:
         c.close()

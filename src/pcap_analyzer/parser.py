@@ -26,7 +26,8 @@ RTT_INDISTINCT = 0.0005  # below this, timestamps cannot tell near from far
 BODY_PREVIEW = 2000
 DELAYED_ACK_MIN, DELAYED_ACK_MAX = 0.03, 0.5
 SEND_AFTER_ACK = 0.01
-SAME_ID_S = 0.2  # tcpdump -i any sees a packet on each interface it crosses, and a shaper can hold it between them
+TCP_TIMESTAMPS = 12
+SAME_ID_S = 1.0  # tcpdump -i any sees a packet on each interface it crosses, and a shaper can hold it between them
 NO_ID_S = 0.002  # without an IP ID, IPv6 and some stacks, only a very short gap shows a copy
 NO_BODY_METHODS = ("HEAD", "CONNECT")
 NO_BODY_STATUS = (204, 304)
@@ -76,6 +77,13 @@ def header(block, name):
     return None
 
 
+def nth_header(block, name, i):
+    """tshark lists the lines of pipelined requests as one block, so the Nth request owns the Nth copy of a header."""
+    prefix = name.lower() + ":"
+    found = [clean_line(x[len(prefix):]) for x in block if x.lower().startswith(prefix)]
+    return found[i] if i < len(found) else None
+
+
 def request_id(get):
     """The ID that follows a request through proxies. A W3C trace ID stays the same when a proxy starts a new span."""
     named = get(os.environ.get("PCAP_ANALYZER_REQUEST_ID_HEADER", "x-request-id").lower())
@@ -121,6 +129,8 @@ class Packet:
     tls_alert_only: bool
     retrans: bool
     win: int = 0
+    seq: int = 0
+    spurious: bool = False
 
 
 @dataclass
@@ -158,6 +168,10 @@ class Stream:
     zero_windows: list = field(default_factory=list)
     offload: bool = False
     seen: dict = field(default_factory=dict)
+    parts: dict = field(default_factory=dict)
+    no_rtt: set = field(default_factory=set)
+    resp_end: int = 0
+    req_end: int = 0
 
 
 class Builder:
@@ -204,12 +218,17 @@ class Builder:
         payload = to_int(p["tcp.len"]) or 0
         if self._is_copy(p, s, t, src, flags, payload):
             self.copies += 1
+            s.no_rtt.add(frame)
             return
         ctypes = [to_int(x) for x in many(p, "tls.record.content_type")]
         retrans = bool(p.get("tcp.analysis.retransmission") or p.get("tcp.analysis.fast_retransmission"))
         win = to_int(p.get("tcp.window_size")) or 0
-        pk = Packet(frame, t, size, src, payload, flags, bool(ctypes) and all(c == TLS_ALERT for c in ctypes), retrans, win)
+        seq = to_int(p.get("tcp.seq")) or 0
+        pk = Packet(frame, t, size, src, payload, flags, bool(ctypes) and all(c == TLS_ALERT for c in ctypes), retrans, win, seq,
+                    bool(p.get("tcp.analysis.spurious_retransmission")))
         s.packets.append(pk)
+        if retrans:
+            s.no_rtt.add(frame)
         if flags & RST and s.rst_code is None:
             s.rst_code = to_int(p.get("tcp.window_size_value")) or 0  # NetScaler writes its reset reason here
         for e in EVENTS:
@@ -235,7 +254,7 @@ class Builder:
             s.wscale = shift if s.wscale is None else min(s.wscale, shift)
         s.sack = s.sack or bool(p.get("tcp.options.sack_perm"))
         rtt = to_float(p.get("tcp.analysis.ack_rtt"))
-        if rtt is not None:
+        if rtt is not None and to_int(p.get("tcp.analysis.acks_frame")) not in s.no_rtt:  # Karn: an ACK of a sent-twice segment times neither
             s.pending_rtt.append((src, rtt))
         self._tls(p, s, pk, src, ctypes)
         self._http1(p, s, pk, src, dst)
@@ -248,7 +267,22 @@ class Builder:
         key = (src, p.get("tcp.seq"), p.get("tcp.ack"), flags, payload, ip_id)
         before = s.seen.get(key)
         s.seen[key] = t
-        return before is not None and t - before <= (SAME_ID_S if to_int(ip_id) else NO_ID_S)
+        window = SAME_ID_S if to_int(ip_id) or flags & SYN else NO_ID_S  # Linux sends SYN-ACK with IP ID 0, and retries it after 1 s at the earliest
+        if before is not None and t - before <= window:
+            return True
+        return Builder._is_resegmented(p, s, t, src, payload, ip_id)
+
+    @staticmethod
+    def _is_resegmented(p, s, t, src, payload, ip_id):
+        """The same bytes cut differently: GSO keeps one big frame on one interface and splits it on the next. Each part takes the next IP ID, and a resend takes a new one."""
+        ident, seq = to_int(ip_id), to_int(p.get("tcp.seq"))
+        if not payload or not ident or seq is None or not s.mss:
+            return False
+        size = max(min(s.mss) - TCP_TIMESTAMPS, 1)
+        before = s.parts.get((src, seq, ident))
+        for k in range((payload - 1) // size + 1):
+            s.parts[(src, seq + k * size, (ident + k) % 65536)] = (t, payload)
+        return before is not None and before[1] != payload and t - before[0] <= SAME_ID_S
 
     def _tls(self, p, s, pk, src, ctypes):
         if not ctypes:
@@ -281,6 +315,8 @@ class Builder:
     def _http1(self, p, s, pk, src, dst):
         segs = sorted({int(x) for k in ("tcp.segment", "tls.segment") for x in many(p, k)})
         methods = many(p, "http.request.method")
+        if methods and pk.seq < s.req_end:  # inside the body of the request before it, or a resend of one already read
+            methods = []
         if methods:
             uris, hosts, versions = many(p, "http.request.uri"), many(p, "http.host"), many(p, "http.request.version")
             lines = many(p, "http.request.line")
@@ -291,10 +327,16 @@ class Builder:
                     frame=pk.frame, start_frame=min(segs + [pk.frame]), method=m,
                     uri=uris[i] if i < len(uris) else None, host=hosts[i] if i < len(hosts) else None,
                     version=versions[i] if i < len(versions) else "HTTP/1.1",
-                    xff=first(p, "http.x_forwarded_for"), request_id=request_id(lambda name: header(lines, name)),
+                    xff=first(p, "http.x_forwarded_for"), request_id=request_id(lambda name: nth_header(lines, name, i)),
                     content_length=to_int(first(p, "http.content_length")), headers=masked_headers(line_pairs(lines)),
                     body=preview(bodies[0]) if bodies else None))
+            s.req_end = pk.seq + pk.payload
+            clen = to_int(first(p, "http.content_length"))
+            if len(methods) == 1 and clen:
+                s.req_end = max(s.req_end, pk.seq + len(f"{methods[0]} {uris[0]} {versions[0]}") + 2 + sum(len(clean_line(x)) + 2 for x in lines) + 2 + clen)
         codes = many(p, "http.response.code")
+        if codes and pk.seq < s.resp_end:  # the same for a response
+            codes = []
         if codes:
             s.client = s.client or dst
             phrases = many(p, "http.response.phrase")
@@ -314,6 +356,12 @@ class Builder:
                     response_time=header(lines, "x-response-time"), headers=masked_headers(line_pairs(lines)),
                     websocket=(header(lines, "upgrade") or "").lower() == "websocket",
                     head_len=head_len, body=preview(bodies[0]) if bodies else None))
+            s.resp_end = pk.seq + pk.payload
+            answered = sum(1 for r in s.responses if r["status"] >= 200) - 1
+            method = s.requests[answered]["method"] if 0 <= answered < len(s.requests) else None
+            clen = to_int(lengths[0]) if lengths else None
+            if len(codes) == 1 and clen and int(codes[0]) >= 200 and int(codes[0]) not in NO_BODY_STATUS and method not in NO_BODY_METHODS:
+                s.resp_end = max(s.resp_end, pk.seq + head_len + clen)
 
     def _http2(self, p, s, pk, src, dst):
         types = many(p, "http2.type")
@@ -504,27 +552,34 @@ def _h1_transactions(s, client, rtt_srv):
         return []
     frames = {p.frame: p for p in s.packets}
     finals = deque(r for r in s.responses if r["status"] >= 200 or r["status"] == SWITCHING_PROTOCOLS)
-    pairs = [(q, finals.popleft() if finals else None) for q in s.requests]
+    pairs = []
+    for q in s.requests:
+        while finals and finals[0]["start_frame"] < q["start_frame"]:  # its request was never seen, so it cannot answer this one
+            pairs.append((None, finals.popleft()))
+        pairs.append((q, finals.popleft() if finals else None))
     pairs += [(None, r) for r in finals]
     out = []
-    rs = [r["start_frame"] for _, r in pairs if r]
+    start_seq = lambda r: frames[r["start_frame"]].seq if r["start_frame"] in frames else frames[r["frame"]].seq
+    rs = sorted({start_seq(r) for _, r in pairs if r})
     for i, (q, r) in enumerate(pairs):
         if q is None:
             continue  # response whose request was not captured
         next_q = pairs[i + 1][0]["start_frame"] if i + 1 < len(pairs) and pairs[i + 1][0] else 1 << 62
         r_start = r["start_frame"] if r else None
-        next_r = next((f for f in rs if r_start is not None and f > r_start), 1 << 62)
+        r_seq = start_seq(r) if r else None
+        next_r = next((x for x in rs if r_seq is not None and x > r_seq), 1 << 62)
         req_pk = [p for p in s.packets if p.src == client and p.payload and q["start_frame"] <= p.frame < min(next_q, r_start or 1 << 62)]
-        resp_pk = [p for p in s.packets if p.src != client and p.payload and not p.tls_alert_only and r_start is not None and r_start <= p.frame < next_r]
+        resp_pk = [p for p in s.packets if p.src != client and p.payload and not p.tls_alert_only and r_seq is not None and r_seq <= p.seq < next_r]
         q_first = frames[q["start_frame"]] if q["start_frame"] in frames else frames[q["frame"]]
         q_last = req_pk[-1] if req_pk else q_first
         r_first = frames.get(r_start) if r else None
-        r_last = resp_pk[-1] if resp_pk else r_first
+        useful = [p for p in resp_pk if not p.spurious]  # the receiver had this already, so it does not end the response
+        r_last = useful[-1] if useful else r_first
         if r and r["status"] == SWITCHING_PROTOCOLS:  # what follows is not this response, so the connection's life does not count as slow
             r_last = r_first
         out.append(_row(s, q["method"], q["uri"], q["host"], q["version"], r and r["status"], r and r["phrase"],
                         q_first, q_last, r_first, r_last, rtt_srv, sum(p.payload for p in req_pk if not p.retrans),
-                        sum(p.payload for p in resp_pk if not p.retrans), q["content_length"], r and r["content_length"],
+                        max((p.seq + p.payload for p in resp_pk), default=r_seq or 0) - (r_seq or 0), q["content_length"], r and r["content_length"],
                         r and r["content_type"], r and r["encoding"], r and r["transfer"], r and (r["server_timing"] or _rt(r)),
                         q["xff"], q["request_id"], None))
         out[-1].update(req_headers=q["headers"], resp_headers=r and r["headers"], req_body=q["body"], resp_body=r and r["body"],

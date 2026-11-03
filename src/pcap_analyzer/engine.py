@@ -104,11 +104,17 @@ def _digest(paths, flt, slow_s):
     return h.hexdigest()[:20]
 
 
-def _warnings(b, conns, keyed, warnings):
+def _warnings(b, conns, txns, keyed, warnings):
     if b.truncated:
         warnings.append("frames_truncated")
     if b.copies:
         warnings.append("copies_removed")
+    seen = {}
+    for x in txns:
+        if x.get("request_id"):
+            seen.setdefault(x["request_id"], set()).add(x["stream"])
+    if any(len(v) > 1 for v in seen.values()):
+        warnings.append("same_request_on_two_connections")
     if b.tunnelled:
         warnings.append("tunnel_seen")
     if any(c["offload"] for c in conns):
@@ -211,7 +217,7 @@ def _save(tmp, out, aid, path, keylog, rsa_key, flt, settings, display_name, ts_
         decryption="keylog" if keylog else "rsa_key" if rsa_key else None, filter=flt.expression(),
         packets=b.total, tcp_packets=b.tcp, bytes=b.bytes, connections=len(conns), transactions=len(txns),
         ip_fragments=b.fragments, frag_needed=b.frag_needed, copies=b.copies, tunnelled=b.tunnelled, capture_start=b.t_first, capture_end=b.t_last, duration_s=round(time.monotonic() - started, 3), slow_s=slow_s,
-        quality=_quality(b, conns), warnings=_warnings(b, conns, bool(keylog or rsa_key), warnings))
+        quality=_quality(b, conns), warnings=_warnings(b, conns, txns, bool(keylog or rsa_key), warnings))
     if settings.keep_capture:
         shutil.copyfile(path, tmp / "capture")
         (tmp / "capture").chmod(0o600)

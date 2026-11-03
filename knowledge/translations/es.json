@@ -707,5 +707,6 @@
   "TLS resumed": "TLS reanudado",
   "ClientHello unanswered": "ClientHello sin respuesta",
   "Certificate expires": "Caducidad del certificado",
-  "gRPC message": "Mensaje gRPC"
+  "gRPC message": "Mensaje gRPC",
+  "The same requests appear on two connections, as they do on both sides of a NAT or proxy. Totals count them twice. Filter by one client address to see one side.": "Las mismas solicitudes aparecen en dos conexiones, como a ambos lados de un NAT o proxy. Los totales las cuentan dos veces. Filtre por una dirección de cliente para ver un lado."
 }

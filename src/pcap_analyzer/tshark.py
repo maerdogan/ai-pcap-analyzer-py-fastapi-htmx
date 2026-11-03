@@ -34,7 +34,7 @@ SINGLE = [
     "frame.number", "frame.time_epoch", "frame.len", "frame.cap_len", "ip.src", "ip.dst", "ipv6.src", "ipv6.dst",
     "tcp.stream", "tcp.srcport", "tcp.dstport", "tcp.seq", "tcp.ack", "tcp.len", "ip.id", "tcp.flags", "tcp.window_size", "tcp.window_size_value",
     "tcp.options.mss_val", "tcp.options.wscale.shift", "tcp.options.sack_perm", "tcp.analysis.initial_rtt",
-    "tcp.analysis.ack_rtt", "dns.qry.name", "dns.time", "ip.flags.mf", "icmp.type", "icmp.code",
+    "tcp.analysis.ack_rtt", "tcp.analysis.acks_frame", "dns.qry.name", "dns.time", "ip.flags.mf", "icmp.type", "icmp.code",
 ]
 MULTI = [
     "http.request.method", "http.request.uri", "http.request.version", "http.host", "http.response.code",
@@ -152,8 +152,9 @@ def version(binary="tshark"):
 
 def _command(binary, capture, keylog, rsa_key, expr):
     # Header reassembly stays off: it takes a body segment with no line end for a partial header and loses later responses.
+    # A resend that was the first copy on the wire looks like a retransmission, and without this its HTTP head is not dissected.
     cmd = [binary, "-n", "-r", str(capture), "-o", "http.desegment_body:FALSE", "-o", "http.desegment_headers:FALSE",
-           "-o", "tcp.desegment_tcp_streams:TRUE", "-o", "tls.desegment_ssl_records:TRUE",
+           "-o", "tcp.desegment_tcp_streams:TRUE", "-o", "tcp.reassemble_out_of_order:TRUE", "-o", "tls.desegment_ssl_records:TRUE",
            "-T", "fields", "-E", "separator=/t", "-E", "quote=n", "-E", "occurrence=a", "-E", f"aggregator={AGG}"]
     if keylog:
         cmd += ["-o", f"tls.keylog_file:{keylog}"]

@@ -500,6 +500,10 @@
     "tls_key_did_not_decrypt": {
       "en": "The key did not decrypt some TLS traffic. It may belong to another session, or RSA keys cannot read this cipher.",
       "tr": "Anahtar, TLS trafiğinin bir kısmını çözemedi. Anahtar başka bir oturuma ait olabilir veya bu şifre takımı RSA anahtarıyla okunamıyor olabilir."
+    },
+    "same_request_on_two_connections": {
+      "en": "The same requests appear on two connections, as they do on both sides of a NAT or proxy. Totals count them twice. Filter by one client address to see one side.",
+      "tr": "Aynı istekler iki bağlantıda görünüyor; bu, NAT veya proxy'nin iki yanında olur. Toplamlar onları iki kez sayar. Tek tarafı görmek için bir istemci adresine göre filtreleyin."
     }
   },
   "netscaler_resets": {

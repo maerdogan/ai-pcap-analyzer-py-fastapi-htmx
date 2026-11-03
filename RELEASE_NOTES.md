@@ -2,6 +2,22 @@
 
 All changes made on the same day are one minor version.
 
+## 0.4.1 (2026-11-03)
+
+### Added
+
+- A warning when the same requests appear on two connections, as on both sides of a NAT or proxy.
+
+### Fixed
+
+- A request or response whose first copy on the wire was a resend was not read, so on lossy traffic it went missing and later responses could be paired with the wrong request.
+- `tcpdump -i any` captures no longer show false retransmissions from a packet seen on several interfaces, including frames split differently on each.
+- Complete responses are no longer marked as truncated when a loss repair was the only copy captured. Bytes are attributed by TCP sequence number.
+- Body text that looks like HTTP no longer creates a fake request or response.
+- Round trip time skips segments that were sent twice, which also corrects the capture point.
+- Pipelined requests keep their own request IDs.
+- `tools/pcap-collect.sh` shows why a capture failed and exits with an error, reports packets the kernel dropped, keeps a capture when its upload fails, handles filters safely and removes the pod `node:` leaves behind.
+
 ## 0.4.0 (2026-11-03)
 
 ### Added

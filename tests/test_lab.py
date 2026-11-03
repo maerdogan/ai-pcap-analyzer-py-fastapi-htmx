@@ -107,6 +107,7 @@ def test_any_interface_copies_are_not_retransmissions(lab, analyzed, kind):
 def test_real_loss_is_counted_like_wireshark(lab, analyzed):
     a = analyzed("pod")
     assert a.meta["transactions"] == 6
+    assert _column(a, "SELECT count(*) FROM http_transactions WHERE answered") == [(6,)]  # a resend that was first on the wire must still count
     seen = _tshark_count(lab / "pod.pcap", "tcp.analysis.retransmission or tcp.analysis.fast_retransmission")
     assert seen > 0 and _column(a, "SELECT sum(retransmissions) FROM tcp_connections") == [(seen,)]
     assert _column(a, "SELECT count(*) FROM http_transactions WHERE retrans_count > 0")[0][0] > 0
