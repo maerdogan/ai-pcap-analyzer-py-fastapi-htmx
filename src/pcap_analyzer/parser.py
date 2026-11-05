@@ -10,6 +10,7 @@ from .tshark import AGG, EVENTS
 
 SYN, ACK, FIN, RST = 0x02, 0x10, 0x01, 0x04
 TLS_ALERT = 21
+TLS_DATA = 23
 SWITCHING_PROTOCOLS = 101
 CIPHERS = {
     0x1301: "TLS_AES_128_GCM_SHA256", 0x1302: "TLS_AES_256_GCM_SHA384", 0x1303: "TLS_CHACHA20_POLY1305_SHA256",
@@ -26,7 +27,8 @@ RTT_INDISTINCT = 0.0005  # below this, timestamps cannot tell near from far
 BODY_PREVIEW = 2000
 DELAYED_ACK_MIN, DELAYED_ACK_MAX = 0.03, 0.5
 SEND_AFTER_ACK = 0.01
-TCP_TIMESTAMPS = 12
+MAX_PARTS = 128  # a 64 KB GSO frame cut at a 536 byte MSS
+RECENT_WHOLES = 16  # frames still being cut on the next interface, which may interleave
 SAME_ID_S = 1.0  # tcpdump -i any sees a packet on each interface it crosses, and a shaper can hold it between them
 NO_ID_S = 0.002  # without an IP ID, IPv6 and some stacks, only a very short gap shows a copy
 SYN_COPY_S = 0.5  # Linux sends SYN and SYN-ACK with IP ID 0 and resends them after 1 s, which timestamps can show as a little less
@@ -162,6 +164,7 @@ class Stream:
     tls_server_hello: bool = False
     tls_certificate: bool = False
     tls_cert_expires: str | None = None
+    tls_data: dict = field(default_factory=dict)  # encrypted records each side sent
     pending_rtt: list = field(default_factory=list)
     rst_code: int = None
     wscale: int | None = None
@@ -170,6 +173,8 @@ class Stream:
     offload: bool = False
     seen: dict = field(default_factory=dict)
     parts: dict = field(default_factory=dict)
+    wholes: dict = field(default_factory=dict)
+    part_size: dict = field(default_factory=dict)
     no_rtt: set = field(default_factory=set)
     resp_end: int = 0
     req_end: int = 0
@@ -212,7 +217,9 @@ class Builder:
             self.fragments += 1
         if first(p, "icmp.type") == "3" and first(p, "icmp.code") == "4":
             self.frag_needed += 1
-        t = float(p["frame.time_epoch"])
+        t = to_float(p.get("frame.time_epoch"))
+        if t is None:  # tshark opened something that is not a network capture, such as a JSON file
+            return
         self.t_first = t if self.t_first is None else min(self.t_first, t)
         self.t_last = t if self.t_last is None else max(self.t_last, t)
         if p.get("dns.time"):
@@ -294,18 +301,36 @@ class Builder:
 
     @staticmethod
     def _is_resegmented(p, s, t, src, payload, ip_id):
-        """The same bytes cut differently: GSO keeps one big frame on one interface and splits it on the next. Each part takes the next IP ID, and a resend takes a new one."""
+        """The same bytes cut differently: GSO keeps one big frame on one interface and splits it on the next, GRO joins them again.
+        Part k of a frame takes its IP ID plus k and starts k part sizes into it. A resend takes an IP ID after all the parts,
+        so a full part never fits, but a short last part can by chance: it counts only once a full part showed the size.
+        This needs no MSS, since a connection that started before the capture has none."""
         ident, seq = to_int(ip_id), to_int(p.get("tcp.seq"))
-        if not payload or not ident or seq is None or not s.mss:
+        if not payload or not ident or seq is None:
             return False
-        size = max(min(s.mss) - TCP_TIMESTAMPS, 1)
-        before = s.parts.get((src, seq, ident))
-        for k in range((payload - 1) // size + 1):
-            s.parts[(src, seq + k * size, (ident + k) % 65536)] = (t, payload)
-        return before is not None and before[1] != payload and t - before[0] <= SAME_ID_S
+        first = s.parts.get((src, ident))
+        if first is not None and first[0] == seq and first[1] != payload and t - first[2] <= SAME_ID_S:
+            s.part_size[src] = min(first[1], payload)
+            return True
+        for start, size, id0, t0 in s.wholes.get(src, ()):
+            k, off = (ident - id0) % 65536, seq - start
+            if not (0 < k <= MAX_PARTS and 0 < off and off % k == 0 and seq + payload <= start + size and t - t0 <= SAME_ID_S):
+                continue
+            part = off // k
+            if payload == part:
+                s.part_size[src] = part
+                return True
+            if payload < part and seq + payload == start + size and s.part_size.get(src) == part:
+                return True
+        s.parts[(src, ident)] = (seq, payload, t)
+        s.wholes.setdefault(src, deque(maxlen=RECENT_WHOLES)).append((seq, payload, ident, t))
+        return False
 
     def _tls(self, p, s, pk, src, ctypes):
-        if not ctypes:
+        opaque = many(p, "tls.record.opaque_type")  # TLS 1.3 hides the real record type, and tshark gives none until it decrypts
+        if opaque or TLS_DATA in ctypes:
+            s.tls_data[src] = s.tls_data.get(src, 0) + (len(opaque) or ctypes.count(TLS_DATA))
+        if not ctypes and not opaque:
             return
         s.tls_seen = True
         if s.tls_start is None:
@@ -481,9 +506,18 @@ def finish_stream(s, slow_s=causes.SLOW_S):
         retransmissions=sum(1 for p in s.packets if p.retrans), zero_windows=len(s.zero_windows),
         byte_ratio_db=_ratio_db(pay_c, pay_s), offload=s.offload, one_way=len({p.src for p in s.packets}) == 1,
         tls_cipher=s.tls_cipher, tls_alpn=s.tls_alpn, tls_alert=s.tls_alert, tls_no_answer=s.tls_hello and not s.tls_server_hello,
-        tls_resumed=s.tls_server_hello and not s.tls_certificate if s.tls_version != "TLS 1.3" else None, tls_cert_expires=s.tls_cert_expires)
+        tls_resumed=s.tls_server_hello and not s.tls_certificate if s.tls_version != "TLS 1.3" else None, tls_cert_expires=s.tls_cert_expires,
+        tls_unread=_tls_unread(s, client))
     _enrich(s, client, txns, conn, slow_s)
     return conn, txns
+
+
+def _tls_unread(s, client):
+    """The client sent encrypted data that the key did not open. A readable Finished shows the key worked, and a handshake
+    cut by the end of the capture, or one that sent nothing after it, has nothing to open. In TLS 1.3 the Finished is encrypted too."""
+    if not s.tls_hello or s.tls_end is not None:
+        return False
+    return s.tls_data.get(client, 0) >= (2 if s.tls_version == "TLS 1.3" else 1)
 
 
 def _ratio_db(a, b):
@@ -580,7 +614,7 @@ def _h1_transactions(s, client, rtt_srv):
     pairs += [(None, r) for r in finals]
     out = []
     start_seq = lambda r: frames[r["start_frame"]].seq if r["start_frame"] in frames else frames[r["frame"]].seq
-    rs = sorted({start_seq(r) for _, r in pairs if r})
+    rs = sorted({start_seq(r) for r in s.responses})  # a 100 Continue for the next request also ends this response
     for i, (q, r) in enumerate(pairs):
         if q is None:
             continue  # response whose request was not captured

@@ -40,12 +40,13 @@ MULTI = [
     "http.request.method", "http.request.uri", "http.request.version", "http.host", "http.response.code",
     "http.response.phrase", "http.response.version", "http.content_length", "http.content_type",
     "http.content_encoding", "http.transfer_encoding", "http.x_forwarded_for", "http.request.line",
-    "http.response.line", "tcp.segment", "tls.segment", "tls.record.content_type", "tls.handshake.type",
+    "http.response.line", "tcp.segment", "tls.segment", "tls.record.content_type", "tls.record.opaque_type", "tls.handshake.type",
     "tls.handshake.extensions_server_name", "tls.handshake.extensions.supported_version",
     "http2.type", "http2.streamid", "http2.flags", "http2.length", "http2.header.count",
     "http2.header.name", "http2.header.value", "http.file_data", "tls.handshake.ciphersuite", "tls.handshake.extensions_alpn_str",
     "tls.alert_message.desc", "x509af.utcTime",
 ]
+PRIVATE_PATH = re.compile(r' ?"?/tmp/pcap-(?:analyzer|upload|export)-[^"\s]*"?')
 # Flags that tshark's TCP analysis sets on a packet. Stored as events.
 EVENTS = [
     "retransmission", "fast_retransmission", "spurious_retransmission", "out_of_order", "lost_segment", "ack_lost_segment",
@@ -55,7 +56,10 @@ FIELDS = SINGLE + MULTI + [f"tcp.analysis.{e}" for e in EVENTS]
 
 
 class TsharkError(Exception):
-    """tshark is missing, too old, or rejected the capture or filter."""
+    """tshark is missing, too old, or rejected the capture or filter. Its message names our private copy, which means nothing to a reader."""
+
+    def __init__(self, message):
+        super().__init__(PRIVATE_PATH.sub("", str(message)))
 
 
 class Stopped(Exception):

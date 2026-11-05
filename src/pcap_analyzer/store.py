@@ -14,7 +14,7 @@ SCHEMA = {
         rtt_client DOUBLE, capture_point VARCHAR, mss INT, tls_version VARCHAR, sni VARCHAR, tls_time DOUBLE,
         close_type VARCHAR, closed_by VARCHAR, transactions INT, sack BOOLEAN, wscale INT, min_window BIGINT,
         retransmissions INT, zero_windows INT, byte_ratio_db DOUBLE, offload BOOLEAN, rst_code INT, one_way BOOLEAN,
-        tls_cipher VARCHAR, tls_alpn VARCHAR, tls_alert VARCHAR, tls_resumed BOOLEAN, tls_no_answer BOOLEAN, tls_cert_expires VARCHAR""",
+        tls_cipher VARCHAR, tls_alpn VARCHAR, tls_alert VARCHAR, tls_resumed BOOLEAN, tls_no_answer BOOLEAN, tls_cert_expires VARCHAR, tls_unread BOOLEAN""",
     "http_transactions": """
         id BIGINT PRIMARY KEY, stream INT, h2_stream INT, seq_on_conn INT, new_conn BOOLEAN, method VARCHAR, uri VARCHAR,
         url_template VARCHAR, host VARCHAR, http_version VARCHAR, status INT, phrase VARCHAR, answered BOOLEAN, req_frame BIGINT, resp_frame BIGINT,
@@ -137,5 +137,5 @@ def _load_into(db, table, cols, rows, folder):
             db.execute(f"COPY {table} FROM '{f.name}' (FORMAT json)")
 
 
-def connect(path):
-    return duckdb.connect(str(Path(path)), read_only=True)
+def connect(path, write=False):
+    return duckdb.connect(str(Path(path)), read_only=not write)

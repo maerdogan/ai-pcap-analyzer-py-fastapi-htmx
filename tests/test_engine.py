@@ -1,7 +1,10 @@
 import gzip
 import os
 import shutil
+import subprocess
+import sys
 import time
+from pathlib import Path
 
 import pytest
 
@@ -26,6 +29,13 @@ def conns(a):
 
 def by_uri(a):
     return {t["uri"]: t for t in txns(a)}
+
+
+def samples_module():
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "tools"))
+    import gen_samples
+
+    return gen_samples
 
 
 @pytest.fixture
@@ -67,6 +77,47 @@ def test_unanswered_request(http):
     assert t["answered"] is False and t["status"] is None
     c = conns(http)[t["stream"]]
     assert (c["close_type"], c["closed_by"]) == ("RST", "server")
+
+
+def test_100_continue_of_the_next_request_is_not_part_of_this_response(tmp_path, settings):
+    """Clients that send Expect: 100-continue get an interim answer to each request, on the same connection."""
+    g = samples_module()
+    w = g.PcapWriter(tmp_path / "continue.pcap")
+    c = g.Conn(w, "10.1.0.1", 45414, "10.2.0.1", 80)
+    t = c.handshake(g.T0)
+    for i in range(3):
+        body = b'{"n": %d}' % i
+        head = g.req("POST", "/api/events", extra=("Expect: 100-continue", f"Content-Length: {len(body)}"))
+        t = c.send(t + 1.0, True, head)
+        t = c.send(t + 0.008, False, b"HTTP/1.1 100 Continue\r\n\r\n")
+        t = c.send(t + 0.05, True, body)
+        t = c.send(t + 0.014, False, g.resp(200, b'{"ok": true}'))
+    w.close()
+    rows = txns(engine.analyze(tmp_path / "continue.pcap", settings=settings))
+    assert [r["status"] for r in rows] == [200, 200, 200]
+    for r in rows:
+        assert r["transfer"] == pytest.approx(0, abs=0.001) and r["resp_bytes"] == len(g.resp(200, b'{"ok": true}'))
+        assert r["wait"] == pytest.approx(0.014, abs=0.001) and r["cause"] == "normal"
+
+
+def test_a_request_the_capture_stopped_after_is_not_unanswered(tmp_path, settings):
+    from pcap_analyzer import reports
+
+    g = samples_module()
+    w = g.PcapWriter(tmp_path / "end.pcap")
+    hung, late = g.Conn(w, "10.1.0.1", 40001, "10.2.0.1", 80), g.Conn(w, "10.1.0.1", 40002, "10.2.0.1", 80)
+    hung.send(hung.handshake(g.T0), True, g.req("GET", "/api/hung"))
+    t = late.handshake(g.T0 + 3)
+    late.send(t, True, g.req("GET", "/api/late"))
+    late.emit(t + 0.05, False, g.ACK)  # the last packet of the capture
+    w.close()
+    a = engine.analyze(tmp_path / "end.pcap", settings=settings)
+    got = by_uri(a)
+    assert (got["/api/hung"]["cause"], got["/api/late"]["cause"]) == ("no_response", "capture_end")
+    with a.connect() as db:
+        issue = {i["key"]: i["count"] for i in reports.issues(db, a.meta)}
+        failed = reports.overview(db, a.meta)["http"]["failed"]
+    assert issue["no_response"] == 1 and failed == 1
 
 
 def test_truncated_response_is_visible(http):
@@ -141,6 +192,51 @@ def test_tls_without_key_warns(samples, settings):
 def test_wrong_key_warns(samples, settings):
     a = engine.analyze(samples / "https_tls13.pcap", keylog=samples / "https_h2.keylog", settings=settings)
     assert a.meta["warnings"] == ["tls_key_did_not_decrypt"]
+
+
+@pytest.mark.parametrize("name", ["https_tls13", "https_tls12_ecdhe"])
+def test_a_large_keylog_is_cut_to_the_capture(samples, settings, tmp_path, monkeypatch, name):
+    """NetScaler writes the keys of every session it served. Only those of the capture reach tshark, and none stay on disk."""
+    big = tmp_path / "all.keylog"
+    other = "".join(f"CLIENT_RANDOM {os.urandom(32).hex()} {os.urandom(48).hex()}\n" for _ in range(2000))
+    mine = (samples / f"{name}.keylog").read_text()
+    big.write_text("# NetScaler\n" + other + mine + other)
+    monkeypatch.setattr(engine, "KEYLOG_CUT_BYTES", 1000)
+    seen = []
+    real = tshark.packets
+    monkeypatch.setattr(tshark, "packets", lambda path, keylog, *a: seen.append(Path(keylog).read_text()) or real(path, keylog, *a))
+    a = engine.analyze(samples / f"{name}.pcap", keylog=big, settings=settings)
+    assert a.meta["warnings"] == [] and a.meta["transactions"] > 0
+    assert seen and all(text.splitlines()[1:] == mine.splitlines() for text in seen)
+    assert not any(p.name == "keylog" for p in a.dir.iterdir())
+
+
+def test_client_randoms_are_found_in_any_format(samples, tmp_path):
+    want = {line.split()[1].lower() for line in (samples / "https_tls12_ecdhe.keylog").read_text().splitlines() if line.startswith("CLIENT_RANDOM")}
+    ng = tmp_path / "x.pcapng"
+    subprocess.run(["tshark", "-r", "-", "-F", "pcapng", "-w", "-"], stdin=open(samples / "https_tls12_ecdhe.pcap", "rb"), stdout=open(ng, "wb"), check=True)
+    for path in (samples / "https_tls12_ecdhe.pcap", ng):
+        assert want <= engine.client_randoms(path)
+
+
+def test_wrong_key_warns_for_tls12(samples, settings):
+    a = engine.analyze(samples / "https_tls12_ecdhe.pcap", keylog=samples / "https_h2.keylog", settings=settings)
+    assert "tls_key_did_not_decrypt" in a.meta["warnings"]
+
+
+def _first_frames(src, n, out):
+    done = subprocess.run(["tshark", "-r", "-", "-Y", f"frame.number <= {n}", "-w", "-"], stdin=open(src, "rb"), capture_output=True, check=True)
+    out.write_bytes(done.stdout)
+    return out
+
+
+@pytest.mark.parametrize("frames", [7, 11])
+def test_no_key_warning_when_nothing_was_encrypted(samples, settings, tmp_path, frames):
+    """Cut before the handshake ended, or right after it: the key had nothing to open, whichever key it is."""
+    cut = _first_frames(samples / "https_tls12_ecdhe.pcap", frames, tmp_path / "cut.pcap")
+    for keylog in (samples / "https_h2.keylog", samples / "https_tls12_ecdhe.keylog"):
+        a = engine.analyze(cut, keylog=keylog, settings=settings, use_cached=False)
+        assert "tls_key_did_not_decrypt" not in a.meta["warnings"]
 
 
 def test_http2_streams(samples, settings, truth):
@@ -218,7 +314,10 @@ def test_cut_short_capture_still_analyzes(samples, settings, tmp_path):
 def test_not_a_capture(settings, tmp_path):
     bad = tmp_path / "bad.pcap"
     bad.write_bytes(b"this is not a capture")
-    with pytest.raises(tshark.TsharkError):
+    with pytest.raises(engine.WrongFile, match="text file"):
+        engine.analyze(bad, settings=settings)
+    bad.write_bytes(bytes(range(256)) * 4)
+    with pytest.raises((tshark.TsharkError, engine.WrongFile)):
         engine.analyze(bad, settings=settings)
 
 
@@ -394,6 +493,42 @@ def test_a_syn_resent_after_a_second_is_not_a_copy():
     assert not parser.Builder._is_copy(syn, s, 100.0, s.a, parser.SYN, 0)
     assert parser.Builder._is_copy(syn, s, 100.00002, s.a, parser.SYN, 0)  # the same SYN on a second interface
     assert not parser.Builder._is_copy(syn, s, 100.99998, s.a, parser.SYN, 0)
+
+
+def test_gso_parts_are_copies_without_an_mss():
+    """tcpdump -i any on a host: the veth shows GSO frames whole, the NIC shows them cut, and two frames can be cut at once.
+    The connection started before the capture, so no SYN gives the MSS."""
+    s = parser.Stream(1, ("10.0.0.1", 8088), ("10.0.0.2", 50186))
+    seg = lambda seq, ident: {"ip.id": hex(ident), "tcp.seq": str(seq), "tcp.ack": "379"}  # noqa: E731
+    copy = lambda seq, ident, n, t: parser.Builder._is_copy(seg(seq, ident), s, t, s.a, parser.ACK, n)  # noqa: E731
+    assert not copy(1, 0x3756, 8192, 0.882363)
+    assert not copy(40961, 0x3774, 40530, 0.882542)
+    assert copy(1, 0x3756, 1398, 0.883148)  # first part of the first frame
+    assert copy(42359, 0x3775, 1398, 0.883149)  # second part of the other frame, before its first
+    assert copy(6991, 0x375B, 1202, 0.883224)  # last and shorter part
+    assert copy(40961, 0x3774, 1398, 0.883536)
+    assert not copy(1399, 0x3790, 1398, 1.1)  # a resend of the second part takes a later IP ID
+    assert not copy(81491, 0x3791, 1398, 1.1)  # new data
+    assert not copy(82889, 0x3792, 1398, 1.2)
+
+
+def test_a_resend_of_the_tail_of_a_tso_frame_is_not_a_copy():
+    """One interface only: the host shows a 3156 byte TSO frame, the NIC sent it as 1398 + 1398 + 360 with the next IP IDs,
+    and the last part was sent again with the IP ID after them. It sits where a part of size 932 would."""
+    s = parser.Stream(1, ("10.0.0.1", 34212), ("10.0.0.2", 443))
+    seg = lambda seq, ident: {"ip.id": hex(ident), "tcp.seq": str(seq), "tcp.ack": "1"}  # noqa: E731
+    assert not parser.Builder._is_copy(seg(20956, 0xB108), s, 2.423223, s.a, parser.ACK, 3156)
+    assert not parser.Builder._is_copy(seg(23752, 0xB10B), s, 2.429370, s.a, parser.ACK, 360)
+
+
+def test_gro_joins_parts_seen_first():
+    """The other way: the NIC shows the parts, and the host after GRO shows them joined."""
+    s = parser.Stream(1, ("10.0.0.1", 8088), ("10.0.0.2", 50186))
+    seg = lambda seq, ident: {"ip.id": hex(ident), "tcp.seq": str(seq), "tcp.ack": "1"}  # noqa: E731
+    copy = lambda seq, ident, n, t: parser.Builder._is_copy(seg(seq, ident), s, t, s.a, parser.ACK, n)  # noqa: E731
+    assert not copy(1, 0x10, 1448, 0.1)
+    assert not copy(1449, 0x11, 1448, 0.1001)
+    assert copy(1, 0x10, 2896, 0.1002)
 
 
 def test_a_syn_ack_that_answers_a_resent_syn_is_not_a_copy():

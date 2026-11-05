@@ -13,21 +13,21 @@ Each [release](https://github.com/maerdogan/ai-pcap-analyzer-py-fastapi-htmx/rel
 From the registry:
 
 ```bash
-docker pull ghcr.io/maerdogan/ai-pcap-analyzer-py-fastapi-htmx:0.6.0
-docker tag ghcr.io/maerdogan/ai-pcap-analyzer-py-fastapi-htmx:0.6.0 pcap-analyzer:0.6.0
+docker pull ghcr.io/maerdogan/ai-pcap-analyzer-py-fastapi-htmx:0.6.1
+docker tag ghcr.io/maerdogan/ai-pcap-analyzer-py-fastapi-htmx:0.6.1 pcap-analyzer:0.6.1
 ```
 
 From the release files, copied to the host:
 
 ```bash
 sha256sum --check --ignore-missing SHA256SUMS
-gunzip -c pcap-analyzer-0.6.0-image-amd64.tar.gz | docker load
+gunzip -c pcap-analyzer-0.6.1-image-amd64.tar.gz | docker load
 ```
 
 Or build it yourself:
 
 ```bash
-docker build -f docker/Containerfile -t pcap-analyzer:0.6.0 .
+docker build -f docker/Containerfile -t pcap-analyzer:0.6.1 .
 ```
 
 Then create the settings and a password hash:
@@ -35,7 +35,7 @@ Then create the settings and a password hash:
 ```bash
 cd docker
 cp .env.example .env
-docker run --rm -it pcap-analyzer:0.6.0 pcap-analyzer hash-password
+docker run --rm -it pcap-analyzer:0.6.1 pcap-analyzer hash-password
 ```
 
 Put the hash in `.env` in single quotes, as `PCAP_ANALYZER_ADMIN_PASSWORD_HASH='...'`, and start it:
@@ -53,7 +53,7 @@ Compose limits the app to 2 CPUs, 4 GiB of memory, 256 processes and 3 GiB in `/
 Push the image to your internal registry, then set the image and host names in `kubernetes/generic/`. Create the password hash on any machine with the image:
 
 ```bash
-docker run --rm -it pcap-analyzer:0.6.0 pcap-analyzer hash-password
+docker run --rm -it pcap-analyzer:0.6.1 pcap-analyzer hash-password
 ```
 
 ```bash

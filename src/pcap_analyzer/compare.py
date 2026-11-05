@@ -1,5 +1,6 @@
 """Compare two captures, and match the same requests seen at two points."""
 import statistics
+from bisect import bisect_left, bisect_right
 
 from . import knowledge, reports
 from .knowledge import t
@@ -80,13 +81,20 @@ def _start_gap(pairs):
 
 
 def _likely(a_rows, b_rows, taken, used, gap):
-    """Pair requests with the same method, URL and status, closest start first."""
+    """Pair requests with the same method, URL and status, closest start first.
+    Each request looks only at the starts of its own kind inside the window, so busy captures stay quick."""
     used, pairs, unclear = set(used), [], 0
+    groups = {}
+    for b in b_rows:  # in start order
+        groups.setdefault((b["method"], b["uri"], b["status"]), []).append(b)
+    starts = {key: [b["req_start"] for b in group] for key, group in groups.items()}
     for a in a_rows:
-        if a["id"] in taken:
+        key = (a["method"], a["uri"], a["status"])
+        if a["id"] in taken or key not in groups:
             continue
-        options = [b for b in b_rows if b["id"] not in used and (b["method"], b["uri"], b["status"]) == (a["method"], a["uri"], a["status"])
-                   and abs(b["req_start"] + gap - a["req_start"]) <= MATCH_WINDOW_S]
+        want = a["req_start"] - gap
+        near = groups[key][bisect_left(starts[key], want - MATCH_WINDOW_S):bisect_right(starts[key], want + MATCH_WINDOW_S)]
+        options = [b for b in near if b["id"] not in used and abs(b["req_start"] + gap - a["req_start"]) <= MATCH_WINDOW_S]
         if options:
             options.sort(key=lambda b: abs(b["req_start"] + gap - a["req_start"]))
             pairs.append((a, options[0]))

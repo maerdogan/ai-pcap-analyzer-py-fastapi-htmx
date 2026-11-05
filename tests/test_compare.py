@@ -85,3 +85,32 @@ def test_exports(samples, settings):
 def test_csv_blocks_formulas():
     out = exports.render([dict(u="=HYPERLINK(1)", v=1)], "csv").decode()
     assert "'=HYPERLINK" in out
+
+
+def _likely_by_scanning(a_rows, b_rows, taken, used, gap):
+    """The plain way to pair, to hold the quick one to."""
+    used, pairs, unclear = set(used), [], 0
+    for a in a_rows:
+        if a["id"] in taken:
+            continue
+        options = [b for b in b_rows if b["id"] not in used and (b["method"], b["uri"], b["status"]) == (a["method"], a["uri"], a["status"])
+                   and abs(b["req_start"] + gap - a["req_start"]) <= compare.MATCH_WINDOW_S]
+        if options:
+            options.sort(key=lambda b: abs(b["req_start"] + gap - a["req_start"]))
+            pairs.append((a, options[0]))
+            used.add(options[0]["id"])
+            unclear += len(options) > 1
+    return pairs, unclear
+
+
+def test_quick_matching_pairs_like_scanning():
+    import random
+
+    random.seed(7)
+    make = lambda n, prefix: sorted(({"id": f"{prefix}{i}", "method": random.choice("GP"), "uri": random.choice(["/a", "/b", "/c"]), "status": random.choice([200, 500]),  # noqa: E731
+                                      "req_start": round(random.uniform(0, 60), 3)} for i in range(n)), key=lambda r: r["req_start"])
+    a_rows, b_rows = make(800, "a"), make(700, "b")
+    for gap in (0.0, 0.4, -3.0):
+        args = (a_rows, b_rows, {"a3", "a10"}, {"b5"}, gap)
+        quick, plain = compare._likely(*args), _likely_by_scanning(*args)
+        assert [(a["id"], b["id"]) for a, b in quick[0]] == [(a["id"], b["id"]) for a, b in plain[0]] and quick[1] == plain[1]

@@ -423,8 +423,17 @@
   "TLS resumed": "TLS sürdürüldü",
   "ClientHello unanswered": "ClientHello cevapsız",
   "Certificate expires": "Sertifika bitişi",
+  "Encrypted data not read": "Şifreli veri okunamadı",
   "gRPC message": "gRPC mesajı",
   "No response": "Cevap yok",
   "Captures over {n} MB are read in parts, so a display filter cannot use frame.number or tcp.stream. Filter by address, port or time instead.": "{n} MB'tan büyük capture'lar parça parça okunur, bu yüzden görüntü filtresinde frame.number veya tcp.stream kullanılamaz. Bunun yerine adres, port veya zamana göre filtreleyin.",
-  "Captures over {n} MB must be pcap or pcapng files.": "{n} MB'tan büyük capture'lar pcap veya pcapng dosyası olmalıdır."
+  "Captures over {n} MB must be pcap or pcapng files.": "{n} MB'tan büyük capture'lar pcap veya pcapng dosyası olmalıdır.",
+  "This is a {kind} archive, not a capture. Extract the capture from it and upload that file.": "Bu bir {kind} arşivi, capture değil. İçindeki capture dosyasını çıkarıp onu yükleyin.",
+  "This is a TLS key log, not a capture. Choose it in the key log field and the capture in the capture field.": "Bu bir TLS key log dosyası, capture değil. Onu key log alanında, capture dosyasını capture alanında seçin.",
+  "This is a key or certificate file, not a capture.": "Bu bir anahtar veya sertifika dosyası, capture değil.",
+  "This is a text file, not a capture.": "Bu bir metin dosyası, capture değil.",
+  "The RSA key must be a PEM file. Convert a .pfx or .p12 file with: openssl pkcs12 -in FILE.pfx -nocerts -nodes -out key.pem": "RSA anahtarı PEM dosyası olmalı. Bir .pfx veya .p12 dosyasını şu komutla çevirin: openssl pkcs12 -in FILE.pfx -nocerts -nodes -out key.pem",
+  "This PEM file holds no private key.": "Bu PEM dosyasında özel anahtar yok.",
+  "This is not a TLS key log. A key log is a text file with lines such as CLIENT_RANDOM.": "Bu bir TLS key log dosyası değil. Key log, CLIENT_RANDOM gibi satırlar içeren bir metin dosyasıdır.",
+  "This file holds no network packets.": "Bu dosyada ağ paketi yok."
 }

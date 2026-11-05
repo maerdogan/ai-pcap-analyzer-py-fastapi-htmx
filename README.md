@@ -126,7 +126,7 @@ flowchart TD
 
 - Make sure you may capture and analyze this traffic. Captures can hold personal data, so your privacy rules apply, such as KVKK or GDPR.
 - Treat a TLS key log like a password, because it decrypts every session it covers. Delete it after use. The app removes its copy after analysis. If a process is killed, the hourly cleanup removes the copy within 7 hours.
-- gzip captures are unpacked up to the size limit. zstd and lz4 files are refused, because their real size cannot be checked.
+- gzip captures are unpacked up to the size limit. zstd and lz4 files are refused, because their real size cannot be checked. ZIP and other archives are refused with a note to extract them.
 - Never commit captures or keys, and never attach them to public issues.
 - `kubernetes/vks` is an example from one private lab. Do not reuse its addresses, and replace its self-signed certificate.
 

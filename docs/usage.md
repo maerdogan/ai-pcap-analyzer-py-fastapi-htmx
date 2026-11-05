@@ -10,7 +10,9 @@ Open **Capture guide**, fill in the server address and port, and copy the comman
 
 ## 2. Upload it
 
-On **Captures**, choose the file. gzip files and several parts of one capture work too, up to 1000 MB after unpacking. To read HTTPS, add a TLS key log under **Decrypt HTTPS**.
+On **Captures**, choose the file. gzip files and several parts of one capture work too, up to 1000 MB after unpacking. A ZIP or other archive must be extracted first.
+
+To read HTTPS, add a TLS key log under **Decrypt HTTPS**. A key log can be up to 512 MB, such as one from NetScaler with the keys of every session it served. A key log over 8 MB is cut to the sessions in the capture before tshark reads it. An RSA key must be a PEM file. Convert a `.pfx` with `openssl pkcs12 -in FILE.pfx -nocerts -nodes -out key.pem`.
 
 ![Upload page](images/upload.jpg)
 

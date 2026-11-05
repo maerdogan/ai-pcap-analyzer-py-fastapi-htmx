@@ -92,6 +92,7 @@
   "tls_resumed": "TLS resumed",
   "tls_no_answer": "ClientHello unanswered",
   "tls_cert_expires": "Certificate expires",
+  "tls_unread": "Encrypted data not read",
   "grpc_status": "gRPC status",
   "grpc_message": "gRPC message"
 }

@@ -2,6 +2,25 @@
 
 All changes made on the same day are one minor version.
 
+## 0.6.1 (2026-11-05)
+
+### Added
+
+- A TLS key log can be up to 512 MB, such as one from NetScaler with the keys of every session it served. Before, the limit was 8 MB. A key log over 8 MB is cut to the sessions in the capture, so tshark does not hold keys it will not use, and the cut copy is deleted after analysis.
+- A request that the capture stopped right after, sooner than the slow request limit, is shown as "Capture ended first". It no longer counts as a request without a response or as a failed request.
+- A ZIP, 7-Zip, RAR, bzip2, xz or tar archive, a key log, a certificate or a text file chosen as the capture gets a message that names it. A `.pfx` or a certificate without a private key in the RSA key field is refused with the `openssl` command that converts it, and a file that is not a key log in the key log field is refused. Before, these decrypted nothing without saying why.
+
+### Fixed
+
+These were found by testing every step with real captures from a Linux server, a `tcpdump -i any` host and both sides of a NetScaler.
+
+- With `Expect: 100-continue`, a response ran on to the `100 Continue` of the next request on the same connection. Its transfer time and size grew, and most such requests were wrongly called slow transfers.
+- On `tcpdump -i any`, GSO frames cut differently on two interfaces were taken for retransmissions when the connection started before the capture, because no MSS was known. Parts are now matched by IP ID and sequence number alone.
+- "The key did not decrypt some TLS traffic" no longer appears for connections that sent no encrypted data, such as a handshake cut by the end of the capture or one followed by no request.
+- Matching two captures of 12,000 and 7,000 requests took 75 seconds, because every request was checked against every other one. Each request now looks only at those with its method, URL and status near its start, which takes about 2 seconds.
+- tshark messages no longer show the app's temporary file paths.
+- A file that tshark opens but that holds no network packets stops with a plain message instead of an internal error.
+
 ## 0.6.0 (2026-11-03)
 
 ### Added

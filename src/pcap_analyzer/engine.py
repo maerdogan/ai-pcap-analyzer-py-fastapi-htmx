@@ -17,11 +17,17 @@ from .parser import Builder, finish_stream, nat_views
 DNS_WINDOW_S = 5.0
 GZIP_MAGIC = b"\x1f\x8b"
 COMPRESSED_MAGIC = (b"\x28\xb5\x2f\xfd", b"\x04\x22\x4d\x18")  # zstd, lz4
+ARCHIVES = {b"PK\x03\x04": "ZIP", b"7z\xbc\xaf": "7-Zip", b"Rar!": "RAR", b"BZh": "bzip2", b"\xfd7zXZ": "xz"}
+KEYLOG_LABELS = (b"CLIENT_RANDOM ", b"CLIENT_HANDSHAKE_TRAFFIC_SECRET ", b"SERVER_HANDSHAKE_TRAFFIC_SECRET ", b"CLIENT_TRAFFIC_SECRET_0 ", b"RSA ")
+HEAD_BYTES = 4096
 CHUNK = 1 << 20
 STALE_TMP_S = 6 * 3600
 TMP_PREFIXES = ("pcap-analyzer-", "pcap-upload-", "pcap-export-")
 PART_BYTES = 100 * CHUNK  # a larger capture is read in parts, and one part takes about as much memory as a capture this size
 STREAM_FIELDS = re.compile(r"\b(frame\.number|tcp\.stream)\b")
+KEYLOG_CUT_BYTES = 8 * CHUNK  # a larger key log, like NetScaler's for every session it served, is cut to the sessions in the capture
+CLIENT_HELLO = re.compile(rb"\x16\x03[\x00-\x04]..\x01...\x03[\x00-\x04](.{32})", re.S)  # TLS record, ClientHello, version, random
+HELLO_BYTES = 43
 
 
 class CaptureTooLarge(Exception):
@@ -34,6 +40,10 @@ class NotFound(Exception):
 
 class CompressedCapture(ValueError):
     pass
+
+
+class WrongFile(ValueError):
+    """A file that is not what its field asks for, such as an archive in the capture field."""
 
 
 @dataclass
@@ -52,11 +62,48 @@ class Analysis:
 
 
 def _refuse_compressed(path):
-    """tshark would unpack these, and the unpacked size cannot be known or limited beforehand."""
+    """tshark would unpack these, and the unpacked size cannot be known or limited beforehand.
+    Other files people pick by mistake get a message that names them, rather than tshark's guess at an unknown format."""
     with open(path, "rb") as f:
-        head = f.read(4)
+        head = f.read(HEAD_BYTES)
     if head.startswith(COMPRESSED_MAGIC):
         raise CompressedCapture(knowledge.t("Compressed captures are not accepted, because their real size cannot be checked. Decompress the file and upload it again."))
+    kind = next((name for magic, name in ARCHIVES.items() if head.startswith(magic)), "tar" if head[257:262] == b"ustar" else None)
+    if kind:
+        raise WrongFile(knowledge.t("This is a {kind} archive, not a capture. Extract the capture from it and upload that file.", kind=kind))
+    if b"\0" in head or not _is_text(head):
+        return
+    if any(label in head for label in KEYLOG_LABELS):
+        raise WrongFile(knowledge.t("This is a TLS key log, not a capture. Choose it in the key log field and the capture in the capture field."))
+    if b"-----BEGIN " in head:
+        raise WrongFile(knowledge.t("This is a key or certificate file, not a capture."))
+    raise WrongFile(knowledge.t("This is a text file, not a capture."))
+
+
+def _is_text(head):
+    try:
+        head.decode("utf-8")
+    except UnicodeDecodeError as e:
+        return e.start >= len(head) - 4  # a character cut at the end of the sample
+    return True
+
+
+def check_keylog(path):
+    """tshark skips lines it cannot read, so a wrong file would decrypt nothing without a word."""
+    with open(path, "rb") as f:
+        head = f.read(HEAD_BYTES)
+    if b"\0" in head or not _is_text(head):
+        raise WrongFile(knowledge.t("This is not a TLS key log. A key log is a text file with lines such as CLIENT_RANDOM."))
+
+
+def check_rsa_key(path):
+    """tshark takes a PEM private key here. A .pfx needs its password, and without a key it silently decrypts nothing."""
+    with open(path, "rb") as f:
+        data = f.read()
+    if b"-----BEGIN" not in data:
+        raise WrongFile(knowledge.t("The RSA key must be a PEM file. Convert a .pfx or .p12 file with: openssl pkcs12 -in FILE.pfx -nocerts -nodes -out key.pem"))
+    if b"PRIVATE KEY-----" not in data:
+        raise WrongFile(knowledge.t("This PEM file holds no private key."))
 
 
 def unpack(path, folder, settings):
@@ -109,7 +156,7 @@ def _facts(db):
     """What the warnings and the quality report need from the saved connections and requests."""
     c = db.execute("""SELECT count(*), count(*) FILTER (NOT handshake_seen), count(*) FILTER (close_type IS NULL),
         count(*) FILTER ((payload_client = 0 AND payload_server = 0) OR one_way), count(*) FILTER (kind = 'TLS'),
-        coalesce(bool_or(offload), false), coalesce(bool_or(kind = 'TLS' AND handshake_seen), false), coalesce(bool_or(kind = 'TLS' AND NOT handshake_seen), false)
+        coalesce(bool_or(offload), false), coalesce(bool_or(kind = 'TLS' AND handshake_seen AND tls_unread), false), coalesce(bool_or(kind = 'TLS' AND NOT handshake_seen), false)
         FROM tcp_connections""").fetchone()
     events = dict(db.execute("SELECT event, count(*) FROM tcp_events WHERE event IN ('ack_lost_segment', 'lost_segment') GROUP BY event").fetchall())
     shared = db.execute("""SELECT 1 FROM http_transactions WHERE request_id IS NOT NULL AND request_id <> ''
@@ -185,6 +232,10 @@ def _analyze(path, keylog, rsa_key, flt, settings, use_cached, display_name, lim
     path = Path(path)
     if path.stat().st_size > settings.max_size_mb * CHUNK:
         raise CaptureTooLarge(knowledge.t("{name} is larger than the {n} MB limit", name=path.name, n=settings.max_size_mb))
+    if keylog:
+        check_keylog(keylog)
+    if rsa_key:
+        check_rsa_key(rsa_key)
     with tempfile.TemporaryDirectory(prefix="pcap-analyzer-", dir="/tmp") as folder:
         capture = join_parts([path], folder, settings)
         display_name = display_name or path.name.removesuffix(".gz")
@@ -201,10 +252,11 @@ def _run(path, keylog, rsa_key, flt, settings, use_cached, display_name, limit):
 
     started = time.monotonic()
     warnings = []
-    run = lambda feed=None: tshark.packets(path, keylog, rsa_key, flt, settings.tshark, warnings, limit, settings.workdir, settings.analysis_timeout_s, feed)
     settings.workdir.mkdir(parents=True, exist_ok=True)
     tmp = Path(tempfile.mkdtemp(prefix=".tmp-", dir=settings.workdir))
     try:
+        used_keylog = _keylog_for(path, keylog, tmp)
+        run = lambda feed=None: tshark.packets(path, used_keylog, rsa_key, flt, settings.tshark, warnings, limit, settings.workdir, settings.analysis_timeout_s, feed)
         writer = store.Writer(tmp / "analysis.duckdb")
         b, views = Builder(), []
         if path.stat().st_size > PART_BYTES:
@@ -216,12 +268,54 @@ def _run(path, keylog, rsa_key, flt, settings, use_cached, display_name, limit):
             dropped = nat_views(views, lambda sid: sid)
             number, parts = {sid: sid for sid, _, _ in views if sid not in dropped}, 0
             b.nat_views = len(dropped)
+        if used_keylog != keylog:
+            used_keylog.unlink()  # keys do not stay with the result
+        if b.total and b.t_first is None:
+            raise WrongFile(knowledge.t("This file holds no network packets."))
         limit.check()
         writer.close(number, b.dns_rows, lambda txns: _attach_dns(txns, b.dns_rows))
+        _mark_capture_end(tmp / "analysis.duckdb", b.t_last, slow_s)
         limit.check()
         return _save(tmp, out, aid, path, keylog, rsa_key, flt, settings, display_name, ts_version, started, warnings, b, parts, slow_s)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
+
+
+def client_randoms(path):
+    """The random of every ClientHello in a capture, found in the raw bytes, so any capture format and tunnel works.
+    The record header, the handshake header, the version and the random lead every ClientHello, so they sit in its first segment."""
+    found, tail = set(), b""
+    with open(path, "rb") as f:
+        while chunk := f.read(16 * CHUNK):
+            data = tail + chunk
+            found.update(r.hex() for r in CLIENT_HELLO.findall(data))
+            tail = data[-(HELLO_BYTES - 1):]
+    return found
+
+
+def _keylog_for(path, keylog, folder):
+    """A large key log cut to the sessions in the capture: tshark keeps every key it reads in memory.
+    A line is keyed by the client random in its second field. Other lines, like RSA ones, stay."""
+    if keylog is None or Path(keylog).stat().st_size <= KEYLOG_CUT_BYTES:
+        return keylog
+    randoms = client_randoms(path)
+    out = Path(folder) / "keylog"
+    with open(keylog, "rb") as src, open(out, "wb") as dst:
+        for line in src:
+            fields = line.split()
+            if len(fields) >= 3 and len(fields[1]) == 64 and fields[1].decode("ascii", "replace").lower() not in randoms:
+                continue
+            dst.write(line)
+    return out
+
+
+def _mark_capture_end(db_path, capture_end, slow_s):
+    """A request with no answer that the capture stopped right after is not known to be unanswered.
+    The end of the capture is known only after the last part, so this runs on the saved requests."""
+    if capture_end is None:
+        return
+    with store.connect(db_path, write=True) as db:
+        db.execute("UPDATE http_transactions SET cause = 'capture_end' WHERE cause = 'no_response' AND ? - req_end < ?", [capture_end, slow_s])
 
 
 def _flush(b, writer, views, limit, slow_s, part=None, offset=0):

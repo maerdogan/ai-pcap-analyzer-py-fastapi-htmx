@@ -9,11 +9,12 @@ import duckdb
 from . import causes, knowledge
 
 SUCCESS = "status BETWEEN 200 AND 399"
+UNANSWERED = "(NOT {t}answered AND {t}cause <> 'capture_end')"  # a request the capture stopped right after is not known to have failed
 TIME_STATS = """count(*) AS requests, count(*) FILTER ({ok}) AS ok,
-    count(*) FILTER (status >= 400 OR NOT answered) AS failed, avg(total) AS avg_total,
+    count(*) FILTER (status >= 400 OR {unanswered}) AS failed, avg(total) AS avg_total,
     median(total) AS p50_total, quantile_cont(total, 0.95) AS p95_total, max(total) AS max_total,
     avg(wait) AS avg_wait, avg(service) AS avg_service, avg(transfer) AS avg_transfer,
-    sum(resp_bytes) AS resp_bytes""".format(ok=SUCCESS)
+    sum(resp_bytes) AS resp_bytes""".format(ok=SUCCESS, unanswered=UNANSWERED.format(t=""))
 TOP_DEFAULT = 5
 TOP_PERCENT = 0.10
 SLOWEST = 10
@@ -97,8 +98,8 @@ def timeline(db):
     lo, length = span["lo"], max(span["hi"] - span["lo"], 0.001)
     width = next((b for b in BUCKETS_S if length / b <= CHART_POINTS), BUCKETS_S[-1])
     count = int(length // width) + 1
-    got = {r["slot"]: r for r in rows(db, """SELECT CAST(floor((req_start - ?) / ?) AS INT) AS slot, count(*) AS requests,
-        count(*) FILTER (status >= 500 OR NOT answered) AS errors, quantile_cont(total, 0.95) AS p95_total FROM http_transactions GROUP BY 1""", [lo, width])}
+    got = {r["slot"]: r for r in rows(db, f"""SELECT CAST(floor((req_start - ?) / ?) AS INT) AS slot, count(*) AS requests,
+        count(*) FILTER (status >= 500 OR {UNANSWERED.format(t="")}) AS errors, quantile_cont(total, 0.95) AS p95_total FROM http_transactions GROUP BY 1""", [lo, width])}
     lost = {r["slot"]: r["n"] for r in rows(db, """SELECT CAST(floor((time - ?) / ?) AS INT) AS slot, count(*) AS n FROM tcp_events
         WHERE event IN ('retransmission', 'fast_retransmission') GROUP BY 1""", [lo, width])}
     spans = db.execute("SELECT start_time, end_time FROM tcp_connections").fetchall()
@@ -118,7 +119,7 @@ def _others(rows_, key, row):
 def backends(db):
     """Each server behind the capture point. A slow one disappears in an average, so mark it against its peers."""
     got = rows(db, f"""SELECT c.server_ip, c.server_port, count(DISTINCT c.stream) AS connections, count(*) AS requests,
-        count(*) FILTER (t.status >= 500 OR NOT t.answered) AS failed, avg(t.total) AS avg_total, median(t.total) AS p50_total,
+        count(*) FILTER (t.status >= 500 OR {UNANSWERED.format(t="t.")}) AS failed, avg(t.total) AS avg_total, median(t.total) AS p50_total,
         quantile_cont(t.total, 0.95) AS p95_total, median(t.service) AS p50_service, count(DISTINCT c.stream) FILTER (c.close_type = 'RST') AS resets,
         sum(t.retrans_count) AS retransmissions FROM http_transactions t JOIN tcp_connections c USING (stream)
         GROUP BY 1, 2 ORDER BY p50_total DESC NULLS LAST""")
@@ -305,7 +306,7 @@ def histogram(db):
 
 # key, severity, condition on requests (t), condition on connections (c). Titles and reasons come from the knowledge base.
 ISSUES = [
-    ("no_response", 1, "NOT t.answered", None),
+    ("no_response", 1, UNANSWERED.format(t="t."), None),
     ("resets", 1, None, "c.close_type = 'RST'"),
     ("no_handshake", 1, None, "NOT c.handshake_seen AND c.transactions = 0 AND c.packets <= 3"),
     ("truncated", 1, "t.truncated", None),

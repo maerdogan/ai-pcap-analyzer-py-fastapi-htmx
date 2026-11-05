@@ -847,6 +847,34 @@
       ]
     ]
   },
+  "capture_end": {
+    "label": {
+      "en": "Capture ended first",
+      "tr": "Capture önce bitti"
+    },
+    "summary": [
+      {
+        "en": "The capture stopped right after this request, before an answer could be expected.",
+        "tr": "Capture bu istekten hemen sonra durdu, cevap beklenecek süre dolmadan."
+      }
+    ],
+    "meaning": {
+      "en": "The request is in the capture, but the capture ended sooner after it than the slow request limit. Whether an answer came is unknown, so it is not counted as a request without a response.",
+      "tr": "İstek capture'da var, ama capture ondan sonra yavaş istek sınırından daha kısa bir süre içinde bitti. Cevap gelip gelmediği bilinmiyor, bu yüzden cevapsız istek sayılmaz."
+    },
+    "checks": [
+      {
+        "en": "To see how such a request ends, take a capture that runs a little longer than the slowest answer you expect.",
+        "tr": "Böyle bir isteğin nasıl bittiğini görmek için beklediğiniz en yavaş cevaptan biraz daha uzun süren bir capture alın."
+      }
+    ],
+    "sources": [
+      [
+        "wireshark",
+        ""
+      ]
+    ]
+  },
   "connection_reset": {
     "label": {
       "en": "Connection reset",

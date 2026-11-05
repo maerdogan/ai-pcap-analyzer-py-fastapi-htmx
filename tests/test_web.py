@@ -138,6 +138,33 @@ def test_zstd_upload_shows_a_clear_error(client, tmp_path):
     assert r.status_code == 400 and "Decompress the file" in r.text
 
 
+@pytest.mark.parametrize("field, content, expected", [
+    ("capture", b"PK\x03\x04" + bytes(60), "ZIP archive"),
+    ("capture", b"#NetScaler\nCLIENT_RANDOM " + b"ab" * 32 + b" " + b"cd" * 48 + b"\n", "TLS key log, not a capture"),
+    ("capture", b"-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----\n", "key or certificate"),
+    ("capture", b"hello\n", "text file"),
+    ("keylog", bytes(range(256)) * 4, "not a TLS key log"),
+    ("rsa_key", b"\x30\x82\x0b\x01" + bytes(200), "openssl pkcs12"),
+    ("rsa_key", b"-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----\n", "no private key"),
+])
+def test_a_wrong_file_gets_a_message_that_names_it(client, samples, field, content, expected):
+    files = {"capture": ("c.pcap", content if field == "capture" else (samples / "https_tls12_rsa.pcap").read_bytes())}
+    if field != "capture":
+        files[field] = ("x", content)
+    r = client.post("/upload", files=files)
+    assert r.status_code == 400 and expected in r.text and "/tmp/" not in r.text
+
+
+@pytest.mark.parametrize("content, expected", [
+    (b"\xd4\xc3\xb2\xa1" + bytes(10), "cut short"),  # tshark names the file in this message
+    (b"\x00\x01" * 500, "no network packets"),  # tshark opens this as a JSON file
+])
+def test_an_unreadable_capture_gets_a_plain_message(client, tmp_path, content, expected):
+    (tmp_path / "c.cap").write_bytes(content)
+    text = upload(client, tmp_path / "c.cap")
+    assert 'class="error"' in text and expected in text and "/tmp/" not in text
+
+
 def test_cookie_flags_and_logout(anon):
     r = anon.post("/login", data={"username": "admin", "password": PW})
     c = r.headers["set-cookie"].lower()
@@ -292,7 +319,7 @@ def test_upload_size_limit(client, samples, settings):
 
 def test_garbage_file_shows_error(client, tmp_path):
     bad = tmp_path / "bad.pcap"
-    bad.write_bytes(b"not a capture at all")
+    bad.write_bytes(bytes(range(256)) * 4)
     assert 'class="error"' in upload(client, bad)
 
 

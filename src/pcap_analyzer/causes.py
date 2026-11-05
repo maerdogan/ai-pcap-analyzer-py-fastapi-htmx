@@ -11,7 +11,7 @@ CAUSE_OF_PHASE = {
     "queue_time": "queueing", "service": "service", "transfer_clean": "transfer", "retrans_time": "loss",
     "zero_window_time": "slow_client", "delayed_ack_time": "delayed_ack",
 }
-CAUSES = sorted(set(CAUSE_OF_PHASE.values()) | {"normal", "no_response", "connection_reset", "truncated", "gateway", "websocket"})
+CAUSES = sorted(set(CAUSE_OF_PHASE.values()) | {"normal", "no_response", "capture_end", "connection_reset", "truncated", "gateway", "websocket"})
 ROUND_TIMEOUTS = (5, 10, 15, 30, 60, 90, 120, 180, 240, 300, 600, 900)  # seconds people set as limits
 SYN_RETRIES = (1, 3, 7, 15, 31)  # total wait when a 1 s timer doubles
 TEXT_TYPES = ("json", "text", "xml", "javascript")

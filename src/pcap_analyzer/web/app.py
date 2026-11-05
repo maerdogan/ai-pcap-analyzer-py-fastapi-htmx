@@ -27,8 +27,9 @@ HERE = Path(__file__).parent
 COOKIE = "pcap_session"
 OPEN_PATHS = ("/login", "/language", "/healthz", "/static/")
 CHUNK = 1 << 20
-FORM_OVERHEAD = 2 * CHUNK  # key files and form fields on top of the capture
 KEY_LIMIT = CHUNK
+KEYLOG_LIMIT = 512 * CHUNK  # NetScaler writes the keys of every session it serves, about 60 MB in four busy minutes
+FORM_OVERHEAD = KEYLOG_LIMIT + 2 * CHUNK  # key files and form fields on top of the capture
 PURGE_INTERVAL_S = 3600
 MAX_CAPTURE_S = 3600
 TAB_LABELS = {"overview": "Overview", "issues": "Issues", "urls": "URLs", "connections": "Connections", "hosts": "Hosts", "backends": "Servers", "tls": "TLS"}
@@ -311,12 +312,14 @@ def create_app(settings=None, https=False):
             kl = rk = None
             if keylog and keylog.filename:
                 kl = Path(tmp) / "keylog"
-                await _save(keylog, kl, KEY_LIMIT * 8, "Key log")
+                await _save(keylog, kl, KEYLOG_LIMIT, "Key log")
+                engine.check_keylog(kl)
             if rsa_key and rsa_key.filename:
                 rk = Path(tmp) / "rsa.pem"
                 await _save(rsa_key, rk, KEY_LIMIT, "RSA key")
+                engine.check_rsa_key(rk)
             job = jobs.submit(tmp, path, name.removesuffix(".gz"), kl, rk, flt)
-        except (HTTPException, QueueFull, engine.CaptureTooLarge, engine.CompressedCapture, tshark.TsharkError) as e:
+        except (HTTPException, QueueFull, engine.CaptureTooLarge, engine.CompressedCapture, engine.WrongFile, tshark.TsharkError) as e:
             shutil.rmtree(tmp, ignore_errors=True)
             if isinstance(e, QueueFull):
                 _bad(knowledge.t("Too many analyses are waiting. Try again in a moment."), 429)
