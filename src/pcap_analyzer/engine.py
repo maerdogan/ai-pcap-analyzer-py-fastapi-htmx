@@ -15,6 +15,7 @@ from .parser import Builder, finish_stream, nat_views
 
 
 DNS_WINDOW_S = 5.0
+DNS_LOOKUP_S = 60.0  # one lookup can try several search domains, each with resolver timeouts
 GZIP_MAGIC = b"\x1f\x8b"
 COMPRESSED_MAGIC = (b"\x28\xb5\x2f\xfd", b"\x04\x22\x4d\x18")  # zstd, lz4
 ARCHIVES = {b"PK\x03\x04": "ZIP", b"7z\xbc\xaf": "7-Zip", b"Rar!": "RAR", b"BZh": "bzip2", b"\xfd7zXZ": "xz"}
@@ -188,19 +189,34 @@ def _warnings(b, facts, keyed, warnings):
     return sorted(set(warnings))
 
 
-def _attach_dns(txns, dns):
-    """Link a lookup to a new connection when its answer came shortly before that connection."""
-    by_name = {}
+def _attach_dns(txns, dns, asks):
+    """Link a lookup to a new connection when its answer came shortly before that connection.
+
+    The time runs from the first query of the lookup, so search domains tried before the answer and
+    queries sent again after a timeout count too. A short name such as web.shop is looked up as
+    web.shop.<search domain>, so those names belong to the host as well."""
+    answers, sent, names_of = {}, {}, {}
     for name, duration, _, t in dns:
         if name:
-            by_name.setdefault(name.lower(), []).append((t, duration))
+            answers.setdefault(name.lower(), []).append((t, duration))
+    for name, t in asks:
+        if name:
+            sent.setdefault(name.lower(), []).append(t)
     for x in txns:
-        host = (x.get("host") or "").split(":")[0].lower()
-        if x.get("connect_time") is None or host not in by_name:
+        host = (x.get("host") or "").split(":")[0].lower().rstrip(".")
+        if x.get("connect_time") is None or not host:
             continue
-        near = [(t, d) for t, d in by_name[host] if 0 <= x["req_start"] - t <= DNS_WINDOW_S]
-        if near:
-            x["dns_time"] = max(near)[1]
+        if host not in names_of:
+            names_of[host] = [n for n in answers.keys() | sent.keys() if n == host or n.startswith(host + ".")]
+        names = names_of[host]
+        near = [(t, d, n) for n in names for t, d in answers.get(n, ()) if 0 <= x["req_start"] - t <= DNS_WINDOW_S]
+        if not near:
+            continue
+        end, duration, final = max(near)
+        asked = end - duration
+        since = max((t for t, _ in answers[final] if t < asked), default=asked - DNS_LOOKUP_S)  # the lookup before ended there
+        start = min((t for n in names for t in sent.get(n, ()) if since < t <= asked), default=asked)
+        x["dns_time"] = end - start
 
 
 def _attach_packet_size(b, txns):
@@ -273,7 +289,7 @@ def _run(path, keylog, rsa_key, flt, settings, use_cached, display_name, limit):
         if b.total and b.t_first is None:
             raise WrongFile(knowledge.t("This file holds no network packets."))
         limit.check()
-        writer.close(number, b.dns_rows, lambda txns: _attach_dns(txns, b.dns_rows))
+        writer.close(number, b.dns_rows, lambda txns: _attach_dns(txns, b.dns_rows, b.dns_asks))
         _mark_capture_end(tmp / "analysis.duckdb", b.t_last, slow_s)
         limit.check()
         return _save(tmp, out, aid, path, keylog, rsa_key, flt, settings, display_name, ts_version, started, warnings, b, parts, slow_s)

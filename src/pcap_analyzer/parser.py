@@ -202,6 +202,7 @@ class Builder:
         self.events = []
         self.dns = {}
         self.dns_rows = []
+        self.dns_asks = []  # every query sent, also those never answered
         self.total = self.tcp = self.bytes = self.truncated = self.fragments = self.frag_needed = 0
         self.copies = self.tunnelled = self.nat_views = 0
         self.t_first = self.t_last = None
@@ -224,6 +225,8 @@ class Builder:
         self.t_last = t if self.t_last is None else max(self.t_last, t)
         if p.get("dns.time"):
             self.dns_rows.append((first(p, "dns.qry.name"), to_float(p["dns.time"]), to_int(p["frame.number"]), t))
+        elif first(p, "dns.flags.response") in ("0", "False") and not p.get("icmp.type"):
+            self.dns_asks.append((first(p, "dns.qry.name"), t))
         sid = to_int(p.get("tcp.stream"))
         if sid is None or p.get("icmp.type"):  # an ICMP error quotes the TCP header of another packet
             return

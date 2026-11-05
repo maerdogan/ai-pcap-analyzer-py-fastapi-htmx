@@ -20,6 +20,8 @@ These were found by testing every step with real captures from a Linux server, a
 - Matching two captures of 12,000 and 7,000 requests took 75 seconds, because every request was checked against every other one. Each request now looks only at those with its method, URL and status near its start, which takes about 2 seconds.
 - tshark messages no longer show the app's temporary file paths.
 - A file that tshark opens but that holds no network packets stops with a plain message instead of an internal error.
+- The DNS time of a request now runs from the first query of its lookup. In a Kubernetes pod with `ndots:5`, a name is first tried with each search domain, and a query that times out is sent again; a 6-second lookup was shown as 0.4 ms. A short service name such as `web.shop`, found under a search domain, now gets a DNS time too. Found in a capture of two pods in different namespaces.
+- A test expected tshark 4.4 or later, so the checks failed on Ubuntu 24.04 with tshark 4.2.
 
 ## 0.6.0 (2026-11-03)
 

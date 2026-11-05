@@ -156,13 +156,14 @@ def test_a_wrong_file_gets_a_message_that_names_it(client, samples, field, conte
 
 
 @pytest.mark.parametrize("content, expected", [
-    (b"\xd4\xc3\xb2\xa1" + bytes(10), "cut short"),  # tshark names the file in this message
-    (b"\x00\x01" * 500, "no network packets"),  # tshark opens this as a JSON file
+    (b"\xd4\xc3\xb2\xa1" + bytes(10), ["cut short"]),  # tshark names the file in this message
+    # tshark 4.4 and later open this as a JSON file, 4.2 refuses it
+    (b"\x00\x01" * 500, ["no network packets", "format TShark understands"]),
 ])
 def test_an_unreadable_capture_gets_a_plain_message(client, tmp_path, content, expected):
     (tmp_path / "c.cap").write_bytes(content)
     text = upload(client, tmp_path / "c.cap")
-    assert 'class="error"' in text and expected in text and "/tmp/" not in text
+    assert 'class="error"' in text and any(e in text for e in expected) and "/tmp/" not in text
 
 
 def test_cookie_flags_and_logout(anon):

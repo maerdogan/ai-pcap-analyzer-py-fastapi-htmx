@@ -34,7 +34,7 @@ SINGLE = [
     "frame.number", "frame.time_epoch", "frame.len", "frame.cap_len", "ip.src", "ip.dst", "ipv6.src", "ipv6.dst",
     "tcp.stream", "tcp.srcport", "tcp.dstport", "tcp.seq", "tcp.seq_raw", "tcp.ack", "tcp.len", "ip.id", "tcp.flags", "tcp.window_size", "tcp.window_size_value",
     "tcp.options.mss_val", "tcp.options.wscale.shift", "tcp.options.sack_perm", "tcp.analysis.initial_rtt",
-    "tcp.analysis.ack_rtt", "tcp.analysis.acks_frame", "dns.qry.name", "dns.time", "ip.flags.mf", "icmp.type", "icmp.code",
+    "tcp.analysis.ack_rtt", "tcp.analysis.acks_frame", "dns.qry.name", "dns.time", "dns.flags.response", "ip.flags.mf", "icmp.type", "icmp.code",
 ]
 MULTI = [
     "http.request.method", "http.request.uri", "http.request.version", "http.host", "http.response.code",

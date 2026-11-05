@@ -148,13 +148,17 @@ def txn(c, t, request, response, service, truth=None, **send_kw):
     return t_end
 
 
-def dns_exchange(w, t, qname, delay, ip_answer):
-    q = struct.pack(">HHHHHH", 0x1234, 0x0100, 1, 0, 0, 0)
+def dns_exchange(w, t, qname, delay, ip_answer, qid=0x1234, port=53000):
+    """A lookup and its answer. No ip_answer gives a "no such name" answer, no delay gives no answer."""
+    q = struct.pack(">HHHHHH", qid, 0x0100, 1, 0, 0, 0)
     q += b"".join(bytes([len(p)]) + p.encode() for p in qname.split(".")) + b"\0" + struct.pack(">HH", 1, 1)
-    a = struct.pack(">HHHHHH", 0x1234, 0x8180, 1, 1, 0, 0) + q[12:]
-    a += b"\xc0\x0c" + struct.pack(">HHIH", 1, 1, 60, 4) + socket.inet_aton(ip_answer)
-    for ts, src, dst, sp, dp, m, d in ((t, "10.10.1.50", "10.10.0.2", 53000, 53, MAC_S + MAC_C, q),
-                                      (t + delay, "10.10.0.2", "10.10.1.50", 53, 53000, MAC_C + MAC_S, a)):
+    a = struct.pack(">HHHHHH", qid, 0x8180 if ip_answer else 0x8183, 1, 1 if ip_answer else 0, 0, 0) + q[12:]
+    if ip_answer:
+        a += b"\xc0\x0c" + struct.pack(">HHIH", 1, 1, 60, 4) + socket.inet_aton(ip_answer)
+    packets = [(t, "10.10.1.50", "10.10.0.2", port, 53, MAC_S + MAC_C, q)]
+    if delay is not None:
+        packets.append((t + delay, "10.10.0.2", "10.10.1.50", 53, port, MAC_C + MAC_S, a))
+    for ts, src, dst, sp, dp, m, d in packets:
         udp = struct.pack(">HHHH", sp, dp, 8 + len(d), 0) + d
         w.write(ts, m + b"\x08\x00" + ipv4(w, src, dst, 17, udp, 64))
 

@@ -392,6 +392,32 @@ def test_truncated_flag_and_dns(http):
     assert q["/api/users/456"]["dns_time"] is None
 
 
+def test_dns_time_counts_search_domains_and_timeouts(tmp_path, settings):
+    g = samples_module()
+    w = g.PcapWriter(tmp_path / "dns.pcap")
+    t0 = g.T0
+    # a Kubernetes pod with ndots:5 tries the search domains first; the last one gets no answer and is sent again
+    g.dns_exchange(w, t0, "app.shop.test.default.svc.cluster.local", 0.001, None, qid=1, port=41001)
+    g.dns_exchange(w, t0 + 0.002, "app.shop.test.local", None, None, qid=2, port=41002)
+    g.dns_exchange(w, t0 + 5.002, "app.shop.test.local", 1.0, None, qid=2, port=41002)
+    g.dns_exchange(w, t0 + 6.003, "app.shop.test", 0.002, "10.2.0.1", qid=3, port=41003)
+    # a short service name is found under a search domain
+    g.dns_exchange(w, t0 + 10, "web.shop.default.svc.cluster.local", 0.001, None, qid=4, port=41004)
+    g.dns_exchange(w, t0 + 10.002, "web.shop.svc.cluster.local", 0.001, "10.2.0.2", qid=5, port=41005)
+    # the next lookup of the same name starts after the last one ended
+    g.dns_exchange(w, t0 + 12, "app.shop.test", 0.002, "10.2.0.1", qid=6, port=41006)
+    for k, (t, host, ip, uri) in enumerate(((t0 + 6.01, "app.shop.test", "10.2.0.1", "/slow"),
+                                            (t0 + 10.01, "web.shop", "10.2.0.2", "/short"),
+                                            (t0 + 12.01, "app.shop.test", "10.2.0.1", "/again"))):
+        c = g.Conn(w, "10.10.1.50", 42001 + k, ip, 80)
+        g.txn(c, c.handshake(t), g.req("GET", uri, host=host), g.resp(200, b"ok"), 0.01)
+    w.close()
+    q = by_uri(engine.analyze(tmp_path / "dns.pcap", settings=settings))
+    assert q["/slow"]["dns_time"] == pytest.approx(6.005, abs=0.0005)
+    assert q["/short"]["dns_time"] == pytest.approx(0.003, abs=0.0005)
+    assert q["/again"]["dns_time"] == pytest.approx(0.002, abs=0.0005)
+
+
 def test_server_reported_time(http):
     assert by_uri(http)["/api/items"]["server_reported"] == pytest.approx(0.1205)
 
